@@ -56,6 +56,14 @@
       "description": "Get the authenticated user's own LinkedIn profile with optional section selection (experience, education, skills, etc.)"
     },
     {
+      "name": "get_my_connections",
+      "description": "Collect connection usernames, names, and headlines from the authenticated user's connections page, with bounded scrolling and an optional result limit"
+    },
+    {
+      "name": "extract_contact_details",
+      "description": "Enrich comma-separated LinkedIn profile usernames with visible contact details in paced chunks while preserving raw profile and contact sections"
+    },
+    {
       "name": "connect_with_person",
       "description": "Send a connection request or accept an incoming one, with optional note"
     },
