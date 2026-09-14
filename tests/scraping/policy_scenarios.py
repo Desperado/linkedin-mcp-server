@@ -883,6 +883,66 @@ async def _single_capture_error_scenario() -> dict[str, Any]:
     )
 
 
+async def _connections_scenario() -> dict[str, Any]:
+    recorder = TraceRecorder("collect_connections__baseline", _COMMON_ALLOWED)
+    clock = FakeClock(recorder)
+    page = (
+        _page(recorder)
+        .script(
+            "evaluate:connections_list",
+            [
+                {
+                    "username": "ada-lovelace",
+                    "name": "Ada Lovelace",
+                    "headline": "Analytical Engineer",
+                }
+            ],
+        )
+        .script(
+            "evaluate:page_text",
+            "Connections\nAda Lovelace\nAnalytical Engineer",
+        )
+    )
+    extractor = _extractor(page)
+    arguments = {"limit": 25, "max_scrolls": 8}
+    async with boundaries(recorder, clock):
+        with recorder.context("collect_connections", "connections"):
+            result = await extractor.collect_connections(**arguments)
+    page.assert_clean()
+    return recorder.trace(
+        {"method": "collect_connections", "arguments": arguments},
+        result,
+    )
+
+
+async def _contact_enrichment_scenario() -> dict[str, Any]:
+    recorder = TraceRecorder("enrich_contacts__baseline", _COMMON_ALLOWED)
+    clock = FakeClock(recorder)
+    page = _page(recorder).script(
+        "evaluate:root_content",
+        _root("Ada Lovelace\n· 1st\nAnalytical Engineer\nLondon"),
+        _root("Email\n\nada@example.test"),
+    )
+    extractor = _extractor(page)
+    arguments = {
+        "usernames": ["ada-lovelace"],
+        "chunk_size": 1,
+        "chunk_delay": 0.0,
+    }
+
+    async def progress(completed: int, total: int) -> None:
+        recorder.record("callback.progress", completed=completed, total=total)
+
+    async with boundaries(recorder, clock):
+        with recorder.context("enrich_contacts"):
+            result = await extractor.enrich_contacts(**arguments, progress_cb=progress)
+    page.assert_clean()
+    return recorder.trace(
+        {"method": "enrich_contacts", "arguments": arguments},
+        result,
+    )
+
+
 async def _get_my_profile_scenario() -> dict[str, Any]:
     name = "get_my_profile__baseline"
     recorder = TraceRecorder(name, _COMMON_ALLOWED)
@@ -1018,9 +1078,11 @@ async def _facade_contract_trace() -> dict[str, Any]:
 
 
 TOOL_FACADE_METHODS = {
+    "collect_connections",
     "connect_with_person",
     "extract_feed",
     "extract_page",
+    "enrich_contacts",
     "get_company_employees",
     "get_conversation",
     "get_inbox",
@@ -1103,6 +1165,8 @@ async def build_policy_traces() -> dict[str, dict[str, Any]]:
         ),
         "scrape-job.json": await _single_capture_facade_scenario("scrape_job"),
         "scrape-job-error.json": await _single_capture_error_scenario(),
+        "connections.json": await _connections_scenario(),
+        "contact-enrichment.json": await _contact_enrichment_scenario(),
         "search-people.json": await _single_capture_facade_scenario("search_people"),
         "search-companies.json": await _single_capture_facade_scenario(
             "search_companies"

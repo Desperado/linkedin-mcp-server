@@ -16,9 +16,17 @@
         "coroutine": true,
         "signature": "(self, text: 'str', *, scope: 'str' = 'main', timeout: 'int' = 5000) -> 'bool'"
       },
+      "collect_connections": {
+        "coroutine": true,
+        "signature": "(self, *, limit: 'int' = 0, max_scrolls: 'int' = 50) -> 'dict[str, Any]'"
+      },
       "connect_with_person": {
         "coroutine": true,
         "signature": "(self, username: 'str', *, note: 'str | None' = None) -> 'dict[str, Any]'"
+      },
+      "enrich_contacts": {
+        "coroutine": true,
+        "signature": "(self, usernames: 'list[str]', chunk_size: 'int' = 5, chunk_delay: 'float' = 30.0, progress_cb: 'Callable[[int, int], Awaitable[None]] | None' = None) -> 'dict[str, Any]'"
       },
       "extract_feed": {
         "coroutine": true,
@@ -94,7 +102,9 @@
       }
     },
     "tool_methods": [
+      "collect_connections",
       "connect_with_person",
+      "enrich_contacts",
       "extract_feed",
       "extract_page",
       "get_company_employees",
@@ -148,6 +158,36 @@
           },
           "required": [
             "linkedin_username"
+          ],
+          "type": "object"
+        },
+        "output": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "extract_contact_details": {
+        "input": {
+          "additionalProperties": false,
+          "properties": {
+            "chunk_delay": {
+              "default": 30.0,
+              "maximum": 300,
+              "minimum": 0,
+              "type": "number"
+            },
+            "chunk_size": {
+              "default": 5,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "usernames": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "usernames"
           ],
           "type": "object"
         },
@@ -329,6 +369,30 @@
           "required": [
             "job_id"
           ],
+          "type": "object"
+        },
+        "output": {
+          "additionalProperties": true,
+          "type": "object"
+        }
+      },
+      "get_my_connections": {
+        "input": {
+          "additionalProperties": false,
+          "properties": {
+            "limit": {
+              "default": 0,
+              "maximum": 1000,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "max_scrolls": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
           "type": "object"
         },
         "output": {
