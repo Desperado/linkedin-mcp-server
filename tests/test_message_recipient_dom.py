@@ -283,6 +283,78 @@ class TestProfileMessageTargetDom:
             "/messaging/compose/?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAB&recipient=ACoAAB"
         ]
 
+    async def test_structural_section_before_wrapped_top_card_is_ignored(
+        self, dom_page
+    ):
+        # The first descendant section can be a heading-free utility shell;
+        # the profile card is the first section that owns a page heading.
+        await _set_composer_content(
+            dom_page,
+            """<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><main>
+              <div>
+                <section><div role="presentation"></div></section>
+                <div><section>
+                  <a href="/in/test-user/"><div><h2>Test User</h2></div></a>
+                  <a style="display:block" href="/messaging/compose/?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAB">
+                    Message
+                  </a>
+                </section></div>
+                <section><h2>Other User</h2>
+                  <a style="display:block" href="/messaging/compose/?recipient=OTHER">
+                    Message
+                  </a>
+                </section>
+              </div>
+            </main></body></html>
+            """,
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "resolved"
+        assert result["displayName"] == "Test User"
+        assert result["composeHrefs"] == [
+            "/messaging/compose/?profileUrn=urn%3Ali%3Afsd_profile%3AACoAAB"
+        ]
+
+    async def test_aria_level_two_profile_heading_resolves(self, dom_page):
+        await _set_composer_content(
+            dom_page,
+            """<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><main>
+              <div><section>
+                <div role="heading" aria-level="2">Test User</div>
+                <a style="display:block" href="/messaging/compose/?recipient=ACoAAB">
+                  Message
+                </a>
+              </section></div>
+            </main></body></html>
+            """,
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "resolved"
+        assert result["displayName"] == "Test User"
+        assert result["composeHrefs"] == ["/messaging/compose/?recipient=ACoAAB"]
+
+    async def test_section_ancestor_outside_main_cannot_supply_action(self, dom_page):
+        await _set_composer_content(
+            dom_page,
+            """<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>
+              <section>
+                <main><h2>Test User</h2></main>
+                <a style="display:block" href="/messaging/compose/?recipient=OTHER">
+                  Outside main
+                </a>
+              </section>
+            </body></html>
+            """,
+        )
+
+        result = await dom_page.evaluate(_PROFILE_MESSAGE_TARGET_JS)
+
+        assert result["status"] == "unresolved"
+
     async def test_later_h2_card_cannot_supply_missing_top_card_action(self, dom_page):
         await _set_composer_content(
             dom_page,

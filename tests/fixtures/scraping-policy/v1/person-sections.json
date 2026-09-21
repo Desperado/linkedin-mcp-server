@@ -114,14 +114,14 @@
       "call": "scrape_person",
       "kind": "wait_for_function",
       "operation": "profile_message_target_ready",
-      "program_digest": "8dbdb093f316",
+      "program_digest": "26cd5c987a26",
       "timeout_ms": 1000
     },
     {
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "profile_message_target",
-      "program_digest": "0ac5c6cfac48"
+      "program_digest": "df8cf3b596f3"
     },
     {
       "call": "scrape_person",

@@ -84,27 +84,47 @@ _PROFILE_MESSAGE_TARGET_JS = r"""() => {
     const main = document.querySelector('main');
     if (!main) return {status: 'unresolved'};
 
-    // The top card is the first <section> under <main>. It is no longer a
-    // direct child of <main> (LinkedIn wraps it in a div since September
-    // 2026), and the name moved from <h1> to <h2>. Pin the section by DOM
-    // position before applying visibility or heading checks: an incomplete,
+    // LinkedIn wraps the top card and may place other structural <section>
+    // elements before it. Locate the first heading-bearing section instead of
+    // assuming that main's first descendant section is the card. Inspect the
+    // first heading of any level before accepting h1/h2: an incomplete,
     // hidden, or unrecognised owner card must never let a later person's card
     // supply the Message action.
-    const ownHeadings = (section, tag) =>
-        Array.from(section.querySelectorAll(tag)).filter(
-            heading => visible(heading) && heading.closest('section') === section
+    const firstHeading = main.querySelector(
+        'h1,h2,h3,h4,h5,h6,[role="heading"]'
+    );
+    const recognisedHeading = heading =>
+        heading && (
+            heading.matches('h1,h2') ||
+            (
+                heading.matches('[role="heading"]') &&
+                ['1', '2'].includes(heading.getAttribute('aria-level') || '')
+            )
         );
+    if (!recognisedHeading(firstHeading)) return {status: 'unresolved'};
+    const section = firstHeading.closest('section');
+    if (
+        !section ||
+        !main.contains(section) ||
+        !visible(section) ||
+        !visible(firstHeading)
+    ) {
+        return {status: 'unresolved'};
+    }
+    const headings = Array.from(
+        section.querySelectorAll(
+            'h1,h2,[role="heading"][aria-level="1"],[role="heading"][aria-level="2"]'
+        )
+    ).filter(
+        heading => visible(heading) && heading.closest('section') === section
+    );
+    if (headings.length !== 1 || headings[0] !== firstHeading) {
+        return {status: 'unresolved'};
+    }
     const ownComposeAnchors = section =>
         Array.from(section.querySelectorAll('a[href*="/messaging/compose/"]')).filter(
             anchor => anchor.closest('section') === section
         );
-    const section = main.querySelector('section');
-    // No visible first section means the probe did not recognise a settled
-    // profile top card, not that the profile lacks a Message action.
-    if (!section || !visible(section)) return {status: 'unresolved'};
-    const found = ownHeadings(section, 'h1');
-    const headings = found.length > 0 ? found : ownHeadings(section, 'h2');
-    if (headings.length !== 1) return {status: 'unresolved'};
 
     // Unavailable is only claimed once the top card is positively
     // identified and none of its Message actions are shown.
