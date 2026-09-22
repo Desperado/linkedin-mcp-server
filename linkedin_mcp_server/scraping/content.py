@@ -54,10 +54,12 @@ class PageContentReader:
     async def _extract_root_content(
         self,
         selectors: list[str],
+        *,
+        prioritize_person_references: bool = False,
     ) -> dict[str, Any]:
         """Extract innerText and raw anchor metadata from the first matching root."""
         result = await self._session.page.evaluate(
-            """({ selectors }) => {
+            """({ selectors, prioritizePersonReferences }) => {
                 const normalize = value => (value || '').replace(/\\s+/g, ' ').trim();
                 const containerSelector = 'section, article, li, div';
                 const headingSelector = 'h1, h2, h3';
@@ -129,7 +131,28 @@ class PageContentReader:
                     return '';
                 };
 
-                const references = Array.from(container.querySelectorAll('a[href]'))
+                const anchors = Array.from(container.querySelectorAll('a[href]'));
+                // Search pages can render hundreds of facet and result-action
+                // links before the profile cards. Keep the existing bounded
+                // metadata read, but let the caller place real /in/ profile
+                // anchors ahead of unrelated controls so the cap cannot erase
+                // every usable person reference.
+                const isPersonProfile = anchor => {
+                    if (!prioritizePersonReferences) return false;
+                    const rawHref = (anchor.getAttribute('href') || '').trim();
+                    try {
+                        return /^\\/in\\/[^/?#]+\\/?$/i.test(
+                            new URL(rawHref, document.baseURI).pathname,
+                        );
+                    } catch {
+                        return false;
+                    }
+                };
+                const personAnchors = anchors.filter(isPersonProfile);
+                const referenceAnchors = prioritizePersonReferences
+                    ? [...personAnchors, ...anchors.filter(anchor => !isPersonProfile(anchor))]
+                    : anchors;
+                const references = referenceAnchors
                     .slice(0, MAX_REFERENCE_ANCHORS)
                     .map(anchor => {
                         const rawHref = (anchor.getAttribute('href') || '').trim();
@@ -156,6 +179,9 @@ class PageContentReader:
 
                 return { source, text, references };
             }""",
-            {"selectors": selectors},
+            {
+                "selectors": selectors,
+                "prioritizePersonReferences": prioritize_person_references,
+            },
         )
         return result

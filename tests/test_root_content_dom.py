@@ -175,6 +175,35 @@ class TestAnchorFilteringAgainstRealDom:
         assert len(result["references"]) == 500
         assert result["references"][-1]["text"] == "Person 499"
 
+    async def test_people_search_prioritizes_profile_anchors_after_controls(
+        self, dom_page
+    ):
+        controls = "".join(
+            f'<a href="/search/results/people/?page={index}">Control {index}</a>'
+            for index in range(500)
+        )
+        profiles = "".join(
+            f'<a href="/in/person-{index}/">Person {index}</a>' for index in range(3)
+        )
+        await dom_page.route(
+            "https://www.linkedin.com/**",
+            lambda route: route.fulfill(
+                content_type="text/html", body=document(f"{controls}{profiles}")
+            ),
+        )
+        await dom_page.goto(BASE_URL)
+        reader = PageContentReader(ScrapingSession(dom_page))
+
+        result = await reader._extract_root_content(
+            ["main"], prioritize_person_references=True
+        )
+
+        assert [reference["text"] for reference in result["references"][:3]] == [
+            "Person 0",
+            "Person 1",
+            "Person 2",
+        ]
+
 
 def sibling_document(fillers: int) -> str:
     """A heading and an anchor separated by `fillers` sibling elements.

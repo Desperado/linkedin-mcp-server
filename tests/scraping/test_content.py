@@ -55,5 +55,6 @@ async def test_the_caller_selectors_reach_the_page_unchanged(mock_page):
     await_args = mock_page.evaluate.await_args
     assert await_args is not None
     assert await_args.args[1] == {
-        "selectors": ["dialog[open]", ".artdeco-modal__content", "main"]
+        "selectors": ["dialog[open]", ".artdeco-modal__content", "main"],
+        "prioritizePersonReferences": False,
     }
