@@ -1460,7 +1460,7 @@ class TestSearchPeople:
             ),
             patch.object(
                 scraper._capture,
-                "_extract_loaded_section",
+                "capture",
                 new_callable=AsyncMock,
                 return_value=extracted("Jane Doe"),
             ) as captured,
@@ -1513,7 +1513,7 @@ class TestSearchPeople:
             ),
             patch.object(
                 scraper._capture,
-                "_extract_loaded_section",
+                "capture",
                 new_callable=AsyncMock,
                 return_value=extracted("Jane Doe"),
             ),

@@ -588,8 +588,11 @@ class PersonScraper:
                     "LinkedIn did not apply a native location filter"
                 )
             url = page_view.url
-            extracted = await self._capture._extract_loaded_section(
-                url, "search_results", plan
+            # Reload the verified URL through the normal capture lifecycle.
+            # A SPA can update its URL before filtered cards replace the old
+            # cards; the capture navigation prevents returning that stale DOM.
+            extracted = await self._capture.capture(
+                url, section_name="search_results", plan=plan
             )
         else:
             extracted = await self._capture.capture(
