@@ -72,6 +72,12 @@ def _location_choice(
     calls: list[str] = []
     add = MagicMock()
     add.click = AsyncMock()
+    entry = MagicMock()
+    entry.count = AsyncMock(return_value=1)
+    entry.or_.return_value = entry
+    entry.first.wait_for = AsyncMock()
+    entry.first.fill = AsyncMock()
+    mock_page.get_by_placeholder = MagicMock(return_value=entry)
 
     async def wait_for(**kwargs):
         calls.append("wait")
@@ -104,7 +110,12 @@ def _location_choice(
 
     mock_page.get_by_text = MagicMock(side_effect=get_by_text)
     return SimpleNamespace(
-        add=add, exact=exact, loose=loose, offered=offered, calls=calls
+        add=add,
+        entry=entry,
+        exact=exact,
+        loose=loose,
+        offered=offered,
+        calls=calls,
     )
 
 
@@ -1501,6 +1512,7 @@ class TestSearchPeople:
         )
         button = MagicMock()
         button.click = AsyncMock()
+        button.first.click = AsyncMock()
         mock_page.get_by_role.return_value = button
         choice = _location_choice(mock_page)
         button.last.fill = AsyncMock()
@@ -1517,7 +1529,9 @@ class TestSearchPeople:
         ):
             result = await scraper.search_people("CTO", location="Berlin, Germany")
         assert result["url"] == mock_page.url
-        button.last.fill.assert_awaited_once_with("Berlin, Germany", timeout=10000)
+        choice.entry.first.fill.assert_awaited_once_with(
+            "Berlin, Germany", timeout=10000
+        )
         choice.offered.first.wait_for.assert_awaited_once_with(
             state="visible", timeout=person_module._LOCATION_SUGGESTION_TIMEOUT_MS
         )
@@ -1530,6 +1544,7 @@ class TestSearchPeople:
         scraper = _scraper(mock_page)
         button = MagicMock()
         button.click = AsyncMock()
+        button.first.click = AsyncMock()
         button.last.fill = AsyncMock()
         mock_page.get_by_role.return_value = button
         choice = _location_choice(
@@ -1552,6 +1567,7 @@ class TestSearchPeople:
         scraper = _scraper(mock_page)
         button = MagicMock()
         button.click = AsyncMock()
+        button.first.click = AsyncMock()
         button.last.fill = AsyncMock()
         mock_page.get_by_role.return_value = button
         choice = _location_choice(mock_page, exact_count=2)
@@ -1563,10 +1579,79 @@ class TestSearchPeople:
         choice.exact.click.assert_not_awaited()
         choice.loose.click.assert_not_awaited()
 
+    async def test_location_filter_names_a_missing_picker_control(self, mock_page):
+        scraper = _scraper(mock_page)
+        button = MagicMock()
+        button.first.click = AsyncMock(
+            side_effect=PlaywrightTimeoutError("Locations never rendered")
+        )
+        mock_page.get_by_role.return_value = button
+        choice = _location_choice(mock_page)
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="location picker: Locations filter"):
+                await scraper.search_people("CTO", location="Berlin, Germany")
+        choice.entry.first.fill.assert_not_awaited()
+        choice.exact.click.assert_not_awaited()
+
+    async def test_location_filter_accepts_the_longer_filter_button_name(
+        self, mock_page
+    ):
+        scraper = _scraper(mock_page)
+        button = MagicMock()
+        button.first.click = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        _location_choice(mock_page)
+        mock_page.url = (
+            "https://www.linkedin.com/search/results/people/"
+            "?keywords=CTO&geoUrn=%5B%22103035651%22%5D"
+        )
+        with (
+            patch.object(
+                scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+            ),
+            patch.object(
+                scraper._capture,
+                "_extract_loaded_section",
+                new_callable=AsyncMock,
+                return_value=extracted("Jane Doe"),
+            ),
+        ):
+            await scraper.search_people("CTO", location="Berlin, Germany")
+        names = [
+            call.kwargs.get("name")
+            for call in mock_page.get_by_role.call_args_list
+            if call.args and call.args[0] == "button"
+        ]
+        assert names[0].match("Locations filter. Clicking this button displays")
+        assert names[0].match("Locations")
+        assert names[-1].match("Show results")
+        assert names[-1].match("Show 1,234 results")
+        assert not names[-1].match("Show results for jobs")
+
+    async def test_location_filter_reports_unapplied_facet_on_url_timeout(
+        self, mock_page
+    ):
+        scraper = _scraper(mock_page)
+        button = MagicMock()
+        button.first.click = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        _location_choice(mock_page)
+        mock_page.wait_for_function = AsyncMock(
+            side_effect=PlaywrightTimeoutError("no geoUrn")
+        )
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="native location filter"):
+                await scraper.search_people("CTO", location="Berlin, Germany")
+
     async def test_location_filter_only_counts_visible_suggestions(self, mock_page):
         scraper = _scraper(mock_page)
         button = MagicMock()
         button.click = AsyncMock()
+        button.first.click = AsyncMock()
         button.last.fill = AsyncMock()
         mock_page.get_by_role.return_value = button
         mock_page.url = (
@@ -1594,6 +1679,7 @@ class TestSearchPeople:
         mock_page.url = "https://www.linkedin.com/search/results/people/?keywords=CTO"
         button = MagicMock()
         button.click = AsyncMock()
+        button.first.click = AsyncMock()
         button.last.fill = AsyncMock()
         mock_page.get_by_role.return_value = button
         _location_choice(mock_page)
@@ -1613,6 +1699,7 @@ class TestSearchPeople:
         )
         button = MagicMock()
         button.click = AsyncMock()
+        button.first.click = AsyncMock()
         button.last.fill = AsyncMock()
         mock_page.get_by_role.return_value = button
         choice = _location_choice(mock_page, exact_count=0, loose_count=1)

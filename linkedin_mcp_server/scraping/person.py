@@ -473,6 +473,17 @@ class PersonScraper:
             "sidebar_profiles": sidebar_profiles,
         }
 
+    @staticmethod
+    async def _picker_step(name: str, action: Any) -> Any:
+        """Run one location-picker interaction; a control that never appears
+        is a fixed picker message, not a masked generic tool error."""
+        try:
+            return await action
+        except PlaywrightTimeoutError as exc:
+            raise FilterValidationError(
+                f"LinkedIn location picker: {name} did not appear"
+            ) from exc
+
     async def _location_choice(self, page_view: Any, location: str) -> Any:
         """Return the one visible typeahead suggestion for ``location``.
 
@@ -566,23 +577,51 @@ class PersonScraper:
             # to that locale, not language-independent selectors.
             await self._navigator._navigate_to_page(url)
             page_view = self._session.page
-            await page_view.get_by_role("button", name="Locations", exact=True).click(
-                timeout=10000
+            # Every control is named here so a missing one fails as a fixed
+            # picker message instead of a masked generic tool error. The
+            # filter button's accessible name may be the bare label or the
+            # longer "Locations filter. Clicking this button ..." description.
+            await self._picker_step(
+                "Locations filter",
+                page_view.get_by_role(
+                    "button", name=re.compile(r"^Locations\b", re.I)
+                ).first.click(timeout=10000),
             )
-            await page_view.get_by_text("Add a location", exact=True).click(
-                timeout=10000
+            # "Add a location" is the entry's placeholder on the current
+            # layout and a clickable label on the older one.
+            entry = page_view.get_by_placeholder("Add a location")
+            label = page_view.get_by_text("Add a location", exact=True)
+            await self._picker_step(
+                "location entry",
+                entry.or_(label).first.wait_for(state="visible", timeout=10000),
             )
-            textbox = page_view.get_by_role("textbox").last
-            await textbox.fill(location, timeout=10000)
+            if await entry.count():
+                textbox = entry.first
+            else:
+                await self._picker_step(
+                    "location entry", label.first.click(timeout=10000)
+                )
+                textbox = page_view.get_by_role("textbox").last
+            await self._picker_step(
+                "location entry", textbox.fill(location, timeout=10000)
+            )
             choice = await self._location_choice(page_view, location)
-            await choice.click(timeout=10000)
-            await page_view.get_by_role(
-                "button", name="Show results", exact=True
-            ).click(timeout=10000)
-            await page_view.wait_for_function(
-                "() => new URL(location.href).searchParams.has('geoUrn')",
-                timeout=15000,
+            await self._picker_step("location choice", choice.click(timeout=10000))
+            await self._picker_step(
+                "Show results",
+                page_view.get_by_role(
+                    "button", name=re.compile(r"^Show(?: [\d,]+)? results$", re.I)
+                ).first.click(timeout=10000),
             )
+            try:
+                await page_view.wait_for_function(
+                    "() => new URL(location.href).searchParams.has('geoUrn')",
+                    timeout=15000,
+                )
+            except PlaywrightTimeoutError as exc:
+                raise FilterValidationError(
+                    "LinkedIn did not apply a native location filter"
+                ) from exc
             final = urlparse(page_view.url)
             params = parse_qs(final.query)
             try:
