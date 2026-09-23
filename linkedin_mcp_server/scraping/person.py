@@ -496,12 +496,20 @@ class PersonScraper:
         an arbitrary prefix or first match. Hidden nodes that repeat the label
         (a live-region announcement, for example) are not choices.
         """
-        exact = page_view.get_by_text(location, exact=True).filter(visible=True)
+        # Suggestions are buttons. A text locator also matches location text
+        # in People cards behind the picker and can reject a valid choice as
+        # ambiguous.
+        exact = page_view.get_by_role("button", name=location, exact=True).filter(
+            visible=True
+        )
         loose = None
         if "," in location:
             city, country = (part.strip() for part in location.rsplit(",", 1))
-            loose = page_view.get_by_text(
-                re.compile(rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I)
+            loose = page_view.get_by_role(
+                "button",
+                name=re.compile(
+                    rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I
+                ),
             ).filter(visible=True)
         offered = exact if loose is None else exact.or_(loose)
         try:
@@ -577,16 +585,27 @@ class PersonScraper:
             # to that locale, not language-independent selectors.
             await self._navigator._navigate_to_page(url)
             page_view = self._session.page
-            # Every control is named here so a missing one fails as a fixed
-            # picker message instead of a masked generic tool error. The
-            # filter button's accessible name may be the bare label or the
-            # longer "Locations filter. Clicking this button ..." description.
-            await self._picker_step(
-                "Locations filter",
-                page_view.get_by_role(
-                    "button", name=re.compile(r"^Locations\b", re.I)
-                ).first.click(timeout=10000),
-            )
+            # The compact filter bar does not always expose Locations. On the
+            # observed layout, All filters opens the location controls.
+            locations = page_view.get_by_role(
+                "button", name=re.compile(r"^Locations\b", re.I)
+            ).filter(visible=True)
+            location_count = await locations.count()
+            if location_count == 1:
+                await self._picker_step(
+                    "Locations filter", locations.first.click(timeout=10000)
+                )
+            elif location_count == 0:
+                await self._picker_step(
+                    "All filters",
+                    page_view.get_by_role(
+                        "button", name="All filters", exact=True
+                    ).click(timeout=10000),
+                )
+            else:
+                raise FilterValidationError(
+                    "LinkedIn location picker: Locations filter was ambiguous"
+                )
             # "Add a location" is the entry's placeholder on the current
             # layout and a clickable label on the older one.
             entry = page_view.get_by_placeholder("Add a location")
