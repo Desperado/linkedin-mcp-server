@@ -35,6 +35,11 @@ from linkedin_mcp_server.scraping.search_urls import build_people_search_url
 from linkedin_mcp_server.scraping.session import NAV_DELAY, ScrapingSession
 from linkedin_mcp_server.scraping.text import SIDEBAR_CHROME_EN
 
+#: How long LinkedIn's location typeahead may take to render a suggestion
+#: after the label is typed. Suggestions arrive by network round trip, so a
+#: count taken before this wait sees none.
+_LOCATION_SUGGESTION_TIMEOUT_MS = 10000
+
 if TYPE_CHECKING:
     from linkedin_mcp_server.callbacks import ProgressCallback
 
@@ -468,6 +473,41 @@ class PersonScraper:
             "sidebar_profiles": sidebar_profiles,
         }
 
+    async def _location_choice(self, page_view: Any, location: str) -> Any:
+        """Return the one visible typeahead suggestion for ``location``.
+
+        ``fill`` returns as soon as the textbox holds the text; LinkedIn then
+        fetches its suggestions, so a count taken right away sees an empty
+        list and the picker fails closed on every healthy page. Wait for a
+        suggestion to render before judging it. The exact English label wins;
+        LinkedIn may also insert a region between city and country ("Munich,
+        Bavaria, Germany"), and exactly one such spelling is accepted, never
+        an arbitrary prefix or first match. Hidden nodes that repeat the label
+        (a live-region announcement, for example) are not choices.
+        """
+        exact = page_view.get_by_text(location, exact=True).filter(visible=True)
+        loose = None
+        if "," in location:
+            city, country = (part.strip() for part in location.rsplit(",", 1))
+            loose = page_view.get_by_text(
+                re.compile(rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I)
+            ).filter(visible=True)
+        offered = exact if loose is None else exact.or_(loose)
+        try:
+            await offered.first.wait_for(
+                state="visible", timeout=_LOCATION_SUGGESTION_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError as exc:
+            raise FilterValidationError(
+                "LinkedIn showed no location suggestion"
+            ) from exc
+        choice = exact if await exact.count() else loose
+        if choice is None or await choice.count() != 1:
+            raise FilterValidationError(
+                "LinkedIn location choice was missing or ambiguous"
+            )
+        return choice
+
     async def search_people(
         self,
         keywords: str,
@@ -534,21 +574,7 @@ class PersonScraper:
             )
             textbox = page_view.get_by_role("textbox").last
             await textbox.fill(location, timeout=10000)
-            choice = page_view.get_by_text(location, exact=True)
-            if await choice.count() == 0 and "," in location:
-                # LinkedIn may insert a region between city and country
-                # ("Munich, Bavaria, Germany"). Accept exactly one such
-                # suggestion, never an arbitrary prefix or first match.
-                city, country = (part.strip() for part in location.rsplit(",", 1))
-                choice = page_view.get_by_text(
-                    re.compile(
-                        rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I
-                    )
-                )
-            if await choice.count() != 1:
-                raise FilterValidationError(
-                    "LinkedIn location choice was missing or ambiguous"
-                )
+            choice = await self._location_choice(page_view, location)
             await choice.click(timeout=10000)
             await page_view.get_by_role(
                 "button", name="Show results", exact=True
