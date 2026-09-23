@@ -472,6 +472,8 @@ class PersonScraper:
         location: str | None = None,
         network: list[str] | None = None,
         current_company: str | None = None,
+        geo_urn: str | None = None,
+        page: int = 1,
     ) -> dict[str, Any]:
         """Search for people and extract the results page.
 
@@ -502,6 +504,8 @@ class PersonScraper:
             location=location,
             network=network,
             current_company=current_company,
+            geo_urn=geo_urn,
+            page=page,
         )
         extracted = await self._capture.capture(
             url,

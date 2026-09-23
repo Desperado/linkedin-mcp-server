@@ -124,6 +124,8 @@ def build_people_search_url(
     location: str | None = None,
     network: list[str] | None = None,
     current_company: str | None = None,
+    geo_urn: str | None = None,
+    page: int = 1,
 ) -> str:
     """Build a LinkedIn people search URL, refusing filters LinkedIn ignores.
 
@@ -149,6 +151,13 @@ def build_people_search_url(
             f'URN via get_company_profile -> references["about"].'
         )
 
+    if geo_urn is not None and not re.fullmatch(r"[0-9]{1,30}", geo_urn):
+        raise FilterValidationError("geo_urn must be a numeric LinkedIn location URN id")
+    if geo_urn is not None and location is not None:
+        raise FilterValidationError("Choose geo_urn or location, not both")
+    if type(page) is not int or page < 1 or page > 5:
+        raise FilterValidationError("page must be an integer from 1 to 5")
+
     params = f"keywords={quote_plus(keywords)}"
     if location:
         params += f"&location={quote_plus(location)}"
@@ -156,6 +165,10 @@ def build_people_search_url(
         params += f"&network={_encode_list_facet(network)}"
     if current_company:
         params += f"&currentCompany={_encode_list_facet([current_company])}"
+    if geo_urn:
+        params += f"&geoUrn={_encode_list_facet([geo_urn])}"
+    if page > 1:
+        params += f"&page={page}"
 
     return f"https://www.linkedin.com/search/results/people/?{params}"
 

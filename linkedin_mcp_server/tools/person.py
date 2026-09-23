@@ -147,6 +147,8 @@ def register_person_tools(
         location: str | None = None,
         network: StrList | None = None,
         current_company: str | None = None,
+        geo_urn: str | None = None,
+        page: int = 1,
         extractor: Any | None = None,
     ) -> dict[str, Any]:
         """
@@ -196,6 +198,8 @@ def register_person_tools(
                     location,
                     network=network,
                     current_company=current_company,
+                    geo_urn=geo_urn,
+                    page=page,
                 )
             except FilterValidationError as e:
                 # Validation messages carry actionable detail; surface
