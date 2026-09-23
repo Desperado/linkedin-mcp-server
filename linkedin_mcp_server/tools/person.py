@@ -157,7 +157,11 @@ def register_person_tools(
         Args:
             keywords: Search keywords (e.g., "software engineer", "recruiter at Google")
             ctx: FastMCP context for progress reporting
-            location: Optional location filter (e.g., "New York", "Remote")
+            location: Optional exact English location label (e.g., "Munich, Germany").
+                The browser selects it in LinkedIn's People filter UI and
+                verifies the resulting native geoUrn. Ambiguous or missing
+                choices fail instead of returning unfiltered people. Resolve
+                this on page 1, then pass the resulting geo_urn for pagination.
             network: Optional connection-degree filter. Each element is one of
                 "F" (1st-degree), "S" (2nd-degree), "O" (3rd-degree and beyond).
                 Example: ["F"] to only return 1st-degree connections. A single

@@ -1422,12 +1422,67 @@ class TestSearchPeople:
         ):
             result = await scraper.search_people(
                 "engineer",
-                location="Seattle",
+                geo_urn="123",
                 network=["F"],
                 current_company="1115",
             )
 
         assert "keywords=engineer" in result["url"]
-        assert "location=Seattle" in result["url"]
+        assert "geoUrn=%5B%22123%22%5D" in result["url"]
         assert "network=%5B%22F%22%5D" in result["url"]
         assert "currentCompany=%5B%221115%22%5D" in result["url"]
+
+    async def test_location_filter_must_resolve_before_pagination(self, mock_page):
+        scraper = _scraper(mock_page)
+        with pytest.raises(ValueError, match="Resolve the location"):
+            await scraper.search_people("CTO", location="Munich, Germany", page=2)
+        mock_page.goto.assert_not_awaited()
+
+    async def test_location_filter_uses_linkedin_choice_and_verified_facet(
+        self, mock_page
+    ):
+        scraper = _scraper(mock_page)
+        mock_page.url = (
+            "https://www.linkedin.com/search/results/people/"
+            "?keywords=CTO&geoUrn=%5B%22103035651%22%5D"
+        )
+        button = MagicMock()
+        button.click = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        choice = MagicMock()
+        choice.count = AsyncMock(return_value=1)
+        choice.click = AsyncMock()
+        mock_page.get_by_text.return_value = choice
+        button.last.fill = AsyncMock()
+        with (
+            patch.object(
+                scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+            ),
+            patch.object(
+                scraper._capture,
+                "_extract_loaded_section",
+                new_callable=AsyncMock,
+                return_value=extracted("Jane Doe"),
+            ) as captured,
+        ):
+            result = await scraper.search_people("CTO", location="Berlin, Germany")
+        assert result["url"] == mock_page.url
+        button.last.fill.assert_awaited_once_with("Berlin, Germany", timeout=10000)
+        captured.assert_awaited_once()
+
+    async def test_location_filter_refuses_unfiltered_result(self, mock_page):
+        scraper = _scraper(mock_page)
+        mock_page.url = "https://www.linkedin.com/search/results/people/?keywords=CTO"
+        button = MagicMock()
+        button.click = AsyncMock()
+        button.last.fill = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        choice = MagicMock()
+        choice.count = AsyncMock(return_value=1)
+        choice.click = AsyncMock()
+        mock_page.get_by_text.return_value = choice
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="native location filter"):
+                await scraper.search_people("CTO", location="Berlin, Germany")

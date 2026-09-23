@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 import logging
+import json
 import re
 
 from patchright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -18,6 +19,7 @@ from linkedin_mcp_server.scraping.capture import (
     SectionCapture,
 )
 from linkedin_mcp_server.scraping.contracts import (
+    FilterValidationError,
     RATE_LIMITED_SECTION_TEXT,
     rate_limited_section_error,
 )
@@ -479,7 +481,9 @@ class PersonScraper:
 
         Args:
             keywords: Free-text query ("software engineer", "recruiter at Google").
-            location: Optional location filter ("New York", "Remote").
+            location: Optional English LinkedIn location label to select in
+                the native People filter UI. A missing or ambiguous choice
+                fails closed; it is never sent as a free-text URL parameter.
             network: Optional connection-degree filter. Each element is one of
                 ``"F"`` (1st-degree), ``"S"`` (2nd-degree), ``"O"`` (3rd-degree
                 and beyond). Example: ``["F"]`` to only return 1st-degree
@@ -502,19 +506,85 @@ class PersonScraper:
         """
         # Builds before it navigates, and the builder refuses a filter
         # LinkedIn would swallow, so an invalid token costs no page load.
+        if location and page != 1:
+            raise FilterValidationError(
+                "Resolve the location filter on page 1 before pagination"
+            )
         url = build_people_search_url(
             keywords,
-            location=location,
             network=network,
             current_company=current_company,
             geo_urn=geo_urn,
             page=page,
         )
-        extracted = await self._capture.capture(
-            url,
-            section_name="search_results",
-            plan=CapturePlan(CaptureMode.SEARCH_RESULTS),
-        )
+        plan = CapturePlan(CaptureMode.SEARCH_RESULTS)
+        if location:
+            # LinkedIn ignores ?location= for People. Select the visible
+            # native facet, then require its resulting URL to carry one
+            # numeric geoUrn before reading any result cards. The browser
+            # context is pinned to en-US; these labels are an explicit table
+            # for that locale, not a language-independent selector claim.
+            await self._navigator._navigate_to_page(url)
+            page_view = self._session.page
+            await page_view.get_by_role("button", name="Locations", exact=True).click(
+                timeout=10000
+            )
+            await page_view.get_by_text("Add a location", exact=True).click(
+                timeout=10000
+            )
+            textbox = page_view.get_by_role("textbox").last
+            await textbox.fill(location, timeout=10000)
+            choice = page_view.get_by_text(location, exact=True)
+            if await choice.count() != 1:
+                raise FilterValidationError(
+                    "LinkedIn location choice was missing or ambiguous"
+                )
+            await choice.click(timeout=10000)
+            await page_view.get_by_role(
+                "button", name="Show results", exact=True
+            ).click(timeout=10000)
+            await page_view.wait_for_function(
+                "() => new URL(location.href).searchParams.has('geoUrn')",
+                timeout=15000,
+            )
+            final = urlparse(page_view.url)
+            params = parse_qs(final.query)
+            try:
+                selected = json.loads(params["geoUrn"][0])
+            except (KeyError, ValueError, TypeError, IndexError) as exc:
+                raise FilterValidationError(
+                    "LinkedIn did not apply a native location filter"
+                ) from exc
+            if (
+                final.scheme != "https"
+                or final.netloc != "www.linkedin.com"
+                or final.path != "/search/results/people/"
+                or params.get("keywords") != [keywords]
+                or (
+                    network is not None
+                    and params.get("network")
+                    != [json.dumps(network, separators=(",", ":"))]
+                )
+                or (
+                    current_company is not None
+                    and params.get("currentCompany")
+                    != [json.dumps([current_company], separators=(",", ":"))]
+                )
+                or len(selected) != 1
+                or not isinstance(selected[0], str)
+                or not re.fullmatch(r"[0-9]{1,30}", selected[0])
+            ):
+                raise FilterValidationError(
+                    "LinkedIn did not apply a native location filter"
+                )
+            url = page_view.url
+            extracted = await self._capture._extract_loaded_section(
+                url, "search_results", plan
+            )
+        else:
+            extracted = await self._capture.capture(
+                url, section_name="search_results", plan=plan
+            )
 
         sections: dict[str, str] = {}
         references: dict[str, list[Reference]] = {}
