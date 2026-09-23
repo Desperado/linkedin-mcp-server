@@ -522,8 +522,8 @@ class PersonScraper:
             # LinkedIn ignores ?location= for People. Select the visible
             # native facet, then require its resulting URL to carry one
             # numeric geoUrn before reading any result cards. The browser
-            # context is pinned to en-US; these labels are an explicit table
-            # for that locale, not a language-independent selector claim.
+            # context is pinned to en-US; these visible labels are specific
+            # to that locale, not language-independent selectors.
             await self._navigator._navigate_to_page(url)
             page_view = self._session.page
             await page_view.get_by_role("button", name="Locations", exact=True).click(
@@ -535,6 +535,16 @@ class PersonScraper:
             textbox = page_view.get_by_role("textbox").last
             await textbox.fill(location, timeout=10000)
             choice = page_view.get_by_text(location, exact=True)
+            if await choice.count() == 0 and "," in location:
+                # LinkedIn may insert a region between city and country
+                # ("Munich, Bavaria, Germany"). Accept exactly one such
+                # suggestion, never an arbitrary prefix or first match.
+                city, country = (part.strip() for part in location.rsplit(",", 1))
+                choice = page_view.get_by_text(
+                    re.compile(
+                        rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I
+                    )
+                )
             if await choice.count() != 1:
                 raise FilterValidationError(
                     "LinkedIn location choice was missing or ambiguous"

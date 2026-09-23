@@ -1486,3 +1486,38 @@ class TestSearchPeople:
         ):
             with pytest.raises(ValueError, match="native location filter"):
                 await scraper.search_people("CTO", location="Berlin, Germany")
+
+    async def test_location_filter_accepts_one_city_region_country_choice(
+        self, mock_page
+    ):
+        scraper = _scraper(mock_page)
+        mock_page.url = (
+            "https://www.linkedin.com/search/results/people/"
+            "?keywords=CTO&geoUrn=%5B%2212345%22%5D"
+        )
+        button = MagicMock()
+        button.click = AsyncMock()
+        button.last.fill = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        add = MagicMock()
+        add.click = AsyncMock()
+        missing = MagicMock()
+        missing.count = AsyncMock(return_value=0)
+        region = MagicMock()
+        region.count = AsyncMock(return_value=1)
+        region.click = AsyncMock()
+        mock_page.get_by_text.side_effect = [add, missing, region]
+        with (
+            patch.object(
+                scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+            ),
+            patch.object(
+                scraper._capture,
+                "_extract_loaded_section",
+                new_callable=AsyncMock,
+                return_value=extracted("Jane Doe"),
+            ),
+        ):
+            await scraper.search_people("CTO", location="Munich, Germany")
+        assert mock_page.get_by_text.call_count == 3
+        region.click.assert_awaited_once()
