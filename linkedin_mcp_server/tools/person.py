@@ -171,6 +171,9 @@ def register_person_tools(
                 exposed under references["about"]. For company-wide employee
                 demographics (location/education/function breakdown) plus a
                 slug-based lookup, use get_company_employees instead.
+            geo_urn: Optional numeric LinkedIn location ID from a People search
+                URL's native ``geoUrn`` facet. Do not combine with ``location``.
+            page: Results page number, 1 through 5. Defaults to the first page.
 
         Returns:
             Dict with url, sections (name -> raw text), and optional references.

@@ -493,6 +493,9 @@ class PersonScraper:
                 unfiltered result set. Look up a company's URN via
                 ``get_company_profile`` -- it is exposed under
                 ``references["about"]``.
+            geo_urn: Numeric location ID from LinkedIn's native ``geoUrn``
+                People search facet; cannot be combined with ``location``.
+            page: Results page number from 1 through 5.
 
         Returns:
             {url, sections: {name: text}}
