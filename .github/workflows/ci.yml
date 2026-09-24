@@ -9,6 +9,9 @@ on:
   # entirely for the stacks this repository's workflow produces.
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint-and-check:
     runs-on: ubuntu-latest
@@ -35,11 +38,23 @@ jobs:
   dependency-audit:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      # GitHub's dependency comparison API returns 403 for forks, even public
-      # ones. Audit the committed lock with OSV instead of silently skipping a
-      # security gate on the Lynx release branches.
+      # Audit the PR lock from one checkout with a script from the trusted
+      # default branch. A PR must not be able to change its own audit verdict.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: candidate
+          persist-credentials: false
+
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: auditor
+          sparse-checkout: scripts/run_uv_audit.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
@@ -47,8 +62,9 @@ jobs:
           enable-cache: false
 
       - name: Audit locked dependencies
+        working-directory: candidate
         run: |
-          python3 scripts/run_uv_audit.py --scope full --output-dir "$RUNNER_TEMP/dependency-audit"
+          python3 ../auditor/scripts/run_uv_audit.py --scope full --output-dir "$RUNNER_TEMP/dependency-audit"
           python3 - "$RUNNER_TEMP/dependency-audit/audit-result.json" <<'PY'
           import json
           import sys
