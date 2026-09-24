@@ -33,7 +33,7 @@ from linkedin_mcp_server.scraping.navigation import PageNavigator
 from linkedin_mcp_server.scraping.profile_page import ProfilePageReader
 from linkedin_mcp_server.scraping.search_urls import build_people_search_url
 from linkedin_mcp_server.scraping.session import NAV_DELAY, ScrapingSession
-from linkedin_mcp_server.scraping.text import SIDEBAR_CHROME_EN
+from linkedin_mcp_server.scraping.text import PEOPLE_LOCATION_EN_US, SIDEBAR_CHROME_EN
 
 #: How long LinkedIn's location typeahead may take to render a suggestion
 #: after the label is typed. Suggestions arrive by network round trip, so a
@@ -496,13 +496,27 @@ class PersonScraper:
         an arbitrary prefix or first match. Hidden nodes that repeat the label
         (a live-region announcement, for example) are not choices.
         """
-        exact = page_view.get_by_text(location, exact=True).filter(visible=True)
+        # Suggestions are buttons whose visible text is the location label.
+        # The name-based lookup failed on a live call; a page-wide text lookup
+        # also matches locations in People cards behind the picker.
+        exact = (
+            page_view.get_by_role("button")
+            .filter(has_text=re.compile(rf"^\s*{re.escape(location)}\s*$", re.I))
+            .filter(visible=True)
+        )
         loose = None
         if "," in location:
             city, country = (part.strip() for part in location.rsplit(",", 1))
-            loose = page_view.get_by_text(
-                re.compile(rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I)
-            ).filter(visible=True)
+            loose = (
+                page_view.get_by_role("button")
+                .filter(
+                    has_text=re.compile(
+                        rf"^\s*{re.escape(city)}, [^,]+, {re.escape(country)}\s*$",
+                        re.I,
+                    )
+                )
+                .filter(visible=True)
+            )
         offered = exact if loose is None else exact.or_(loose)
         try:
             await offered.first.wait_for(
@@ -577,41 +591,90 @@ class PersonScraper:
             # to that locale, not language-independent selectors.
             await self._navigator._navigate_to_page(url)
             page_view = self._session.page
-            # Every control is named here so a missing one fails as a fixed
-            # picker message instead of a masked generic tool error. The
-            # filter button's accessible name may be the bare label or the
-            # longer "Locations filter. Clicking this button ..." description.
-            await self._picker_step(
-                "Locations filter",
-                page_view.get_by_role(
-                    "button", name=re.compile(r"^Locations\b", re.I)
-                ).first.click(timeout=10000),
+            # The compact filter bar does not always expose Locations. On the
+            # observed layout, All filters opens the location controls.
+            controls = PEOPLE_LOCATION_EN_US
+            locations = page_view.get_by_role(
+                "button", name=controls.locations_button_pattern
+            ).filter(visible=True)
+            location_count = await locations.count()
+            if location_count == 1:
+                await self._picker_step(
+                    "Locations filter", locations.first.click(timeout=10000)
+                )
+            elif location_count == 0:
+                all_filters = page_view.get_by_role(
+                    "button", name=controls.all_filters_button, exact=True
+                ).filter(visible=True)
+                await self._picker_step(
+                    "All filters",
+                    all_filters.first.wait_for(state="visible", timeout=10000),
+                )
+                if await all_filters.count() != 1:
+                    raise FilterValidationError(
+                        "LinkedIn location picker: All filters was ambiguous"
+                    )
+                await self._picker_step("All filters", all_filters.click(timeout=10000))
+            else:
+                raise FilterValidationError(
+                    "LinkedIn location picker: Locations filter was ambiguous"
+                )
+            # All filters first exposes an Add a location button; clicking it
+            # creates the textbox with that placeholder. Never fill a global
+            # "last textbox": another filter can add one after the location.
+            entry = page_view.get_by_placeholder(controls.location_entry).filter(
+                visible=True
             )
-            # "Add a location" is the entry's placeholder on the current
-            # layout and a clickable label on the older one.
-            entry = page_view.get_by_placeholder("Add a location")
-            label = page_view.get_by_text("Add a location", exact=True)
+            entry_button = page_view.get_by_role(
+                "button", name=controls.location_entry, exact=True
+            ).filter(visible=True)
             await self._picker_step(
                 "location entry",
-                entry.or_(label).first.wait_for(state="visible", timeout=10000),
+                entry.or_(entry_button).first.wait_for(state="visible", timeout=10000),
             )
-            if await entry.count():
-                textbox = entry.first
-            else:
+            if await entry.count() == 0:
+                if await entry_button.count() != 1:
+                    raise FilterValidationError(
+                        "LinkedIn location picker: location entry was ambiguous"
+                    )
                 await self._picker_step(
-                    "location entry", label.first.click(timeout=10000)
+                    "location entry", entry_button.click(timeout=10000)
                 )
-                textbox = page_view.get_by_role("textbox").last
+                await self._picker_step(
+                    "location entry",
+                    entry.wait_for(state="visible", timeout=10000),
+                )
+            if await entry.count() != 1:
+                raise FilterValidationError(
+                    "LinkedIn location picker: location entry was ambiguous"
+                )
             await self._picker_step(
-                "location entry", textbox.fill(location, timeout=10000)
+                "location entry", entry.fill(location, timeout=10000)
             )
             choice = await self._location_choice(page_view, location)
             await self._picker_step("location choice", choice.click(timeout=10000))
+            # The All filters panel renders Show results as a link, while
+            # compact filter layouts may render it as a button. Require one
+            # visible apply control across both observed roles.
+            show_name = controls.show_results_pattern
+            show_results = (
+                page_view.get_by_role("link", name=show_name)
+                .filter(visible=True)
+                .or_(
+                    page_view.get_by_role("button", name=show_name).filter(visible=True)
+                )
+            )
             await self._picker_step(
                 "Show results",
-                page_view.get_by_role(
-                    "button", name=re.compile(r"^Show(?: [\d,]+)? results$", re.I)
-                ).first.click(timeout=10000),
+                show_results.first.wait_for(state="visible", timeout=10000),
+            )
+            if await show_results.count() != 1:
+                raise FilterValidationError(
+                    "LinkedIn location picker: Show results was ambiguous"
+                )
+            await self._picker_step(
+                "Show results",
+                show_results.click(timeout=10000),
             )
             try:
                 await page_view.wait_for_function(

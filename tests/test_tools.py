@@ -273,6 +273,8 @@ class TestPersonTool:
             "New York",
             network=None,
             current_company=None,
+            geo_urn=None,
+            page=1,
         )
 
     async def test_search_people_with_network_and_company_filters(self, mock_context):
@@ -307,6 +309,8 @@ class TestPersonTool:
             None,
             network=["F"],
             current_company="1115",
+            geo_urn=None,
+            page=1,
         )
 
     @pytest.mark.parametrize(
@@ -369,6 +373,8 @@ class TestPersonTool:
             None,
             network=["F"],
             current_company=None,
+            geo_urn=None,
+            page=1,
         )
 
     async def test_search_people_validation_error_surfaced_as_tool_error(

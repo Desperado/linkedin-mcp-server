@@ -103,6 +103,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -110,7 +111,7 @@
       "call": "get_inbox",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5",
+      "program_digest": "7bd41b769f8d",
       "section": "conversation"
     },
     {

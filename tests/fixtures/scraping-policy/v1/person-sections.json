@@ -100,6 +100,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -107,7 +108,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "arg": null,
@@ -237,6 +238,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -244,7 +246,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -360,6 +362,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -367,7 +370,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -483,6 +486,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -490,7 +494,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -606,6 +610,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -613,7 +618,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -729,6 +734,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -736,7 +742,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -852,6 +858,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -859,7 +866,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -975,6 +982,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -982,7 +990,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -1098,6 +1106,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -1105,7 +1114,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -1182,6 +1191,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "dialog[open]",
           ".artdeco-modal__content",
@@ -1191,7 +1201,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
@@ -1288,6 +1298,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": false,
         "selectors": [
           "main"
         ]
@@ -1295,7 +1306,7 @@
       "call": "scrape_person",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5"
+      "program_digest": "7bd41b769f8d"
     },
     {
       "call": "scrape_person",
