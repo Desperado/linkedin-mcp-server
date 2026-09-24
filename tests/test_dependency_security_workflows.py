@@ -1,4 +1,4 @@
-"""Contracts for dependency review and scheduled dependency audits."""
+"""Contracts for pull-request and scheduled dependency audits."""
 
 from __future__ import annotations
 
@@ -22,9 +22,6 @@ run_uv_audit = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(run_uv_audit)
 _CI_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "ci.yml"
 _AUDIT_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "dependency-audit.yml"
-_DEPENDENCY_REVIEW = (
-    "actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0"
-)
 _ACTION_PIN = re.compile(r"uses:\s+[^@\s]+@([0-9a-f]{40})\s+#\s+v\S+")
 
 
@@ -35,32 +32,29 @@ def _workflow(path: Path) -> dict[str, Any]:
     return workflow
 
 
-def test_dependency_review_blocks_high_advisories_through_test() -> None:
+def test_pull_request_audit_blocks_vulnerabilities_through_test() -> None:
     workflow = _workflow(_CI_WORKFLOW)
-    review = workflow["jobs"]["dependency-review"]
+    audit = workflow["jobs"]["dependency-audit"]
     aggregator = workflow["jobs"]["test"]
 
     assert "pull_request" in workflow["on"]
     assert "push" in workflow["on"]
-    assert review["if"] == "github.event_name == 'pull_request'"
-    assert review["permissions"] == {"contents": "read"}
-    assert review["steps"][0]["uses"] == _DEPENDENCY_REVIEW.split(" #", 1)[0]
-    assert review["steps"][0]["with"]["fail-on-severity"] == "high"
-    assert review["steps"][0]["with"]["fail-on-scopes"] == (
-        "runtime, development, unknown"
-    )
-    assert review["steps"][0]["with"]["retry-on-snapshot-warnings"] is True
-    assert "dependency-review" in aggregator["needs"]
+    assert audit["if"] == "github.event_name == 'pull_request'"
+    assert audit["steps"][1]["with"]["version"] == "0.12.13"
+    assert audit["steps"][1]["with"]["enable-cache"] is False
+    assert "scripts/run_uv_audit.py --scope full" in audit["steps"][2]["run"]
+    assert 'report["state"] != "no_vulnerabilities"' in audit["steps"][2]["run"]
+    assert "dependency-audit" in aggregator["needs"]
     assert aggregator["if"] == "always()"
     assert aggregator["steps"][0]["if"] == "github.event_name == 'pull_request'"
-    assert "needs.dependency-review.result" in aggregator["steps"][0]["run"]
+    assert "needs.dependency-audit.result" in aggregator["steps"][0]["run"]
 
 
-def test_dependency_review_aggregator_decision() -> None:
+def test_dependency_audit_aggregator_decision() -> None:
     workflow = _workflow(_CI_WORKFLOW)
     step = workflow["jobs"]["test"]["steps"][0]
     match = re.fullmatch(
-        r"test '\$\{\{ needs\.dependency-review\.result \}\}' (=|!=) (\w+)",
+        r"test '\$\{\{ needs\.dependency-audit\.result \}\}' (=|!=) (\w+)",
         step["run"],
     )
 
@@ -79,27 +73,24 @@ def test_dependency_review_aggregator_decision() -> None:
     assert not allows("pull_request", "skipped")
 
 
-def test_dependency_review_rejects_snapshot_warnings(tmp_path: Path) -> None:
+def test_pull_request_audit_rejects_findings_and_scanner_errors(tmp_path: Path) -> None:
     workflow = _workflow(_CI_WORKFLOW)
-    step = workflow["jobs"]["dependency-review"]["steps"][1]
+    step = workflow["jobs"]["dependency-audit"]["steps"][2]
 
-    assert step["name"] == "Require complete dependency snapshots"
-    assert step["env"]["BASE_SHA"] == "${{ github.event.pull_request.base.sha }}"
-    assert step["env"]["HEAD_SHA"] == "${{ github.event.pull_request.head.sha }}"
-    assert "x-github-dependency-graph-snapshot-warnings:" in step["run"]
+    assert step["name"] == "Audit locked dependencies"
     assert "raise SystemExit" in step["run"]
     assert "|| true" not in step["run"]
 
     script = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
-    response = tmp_path / "response"
-    for header, expected_exit in (
-        ("", 0),
-        ("x-github-dependency-graph-snapshot-warnings:\n", 0),
-        ("X-GitHub-Dependency-Graph-Snapshot-Warnings: c25hcHNob3Q=\n", 1),
+    report_path = tmp_path / "audit-result.json"
+    for state, expected_exit in (
+        ("no_vulnerabilities", 0),
+        ("vulnerabilities", 1),
+        ("scanner_error", 1),
     ):
-        response.write_text(f"HTTP/2 200 OK\n{header}\n[]\n", encoding="utf-8")
+        report_path.write_text(json.dumps({"state": state}), encoding="utf-8")
         completed = subprocess.run(
-            [sys.executable, "-", str(response)],
+            [sys.executable, "-", str(report_path)],
             input=script,
             capture_output=True,
             check=False,
