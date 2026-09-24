@@ -103,6 +103,7 @@
     },
     {
       "arg": {
+        "prioritizePersonReferences": true,
         "selectors": [
           "main"
         ]
@@ -110,7 +111,7 @@
       "call": "extract_page",
       "kind": "evaluate",
       "operation": "root_content",
-      "program_digest": "e8a0e21ac6f5",
+      "program_digest": "7bd41b769f8d",
       "section": "section"
     }
   ],

@@ -255,7 +255,10 @@ class SectionCapture:
             scrolls = plan.max_scrolls if plan.max_scrolls is not None else 5
             await self._session.scroll_body(pause_time=0.5, max_scrolls=scrolls)
 
-        raw_result = await self._content._extract_root_content(["main"])
+        raw_result = await self._content._extract_root_content(
+            ["main"],
+            prioritize_person_references=CaptureMode.SEARCH_RESULTS in plan.mode,
+        )
         raw = raw_result["text"]
 
         if not raw:

@@ -1057,7 +1057,8 @@ class TestExtractOverlay:
         await_args = mock_page.evaluate.await_args
         assert await_args is not None
         assert await_args.args[1] == {
-            "selectors": ["dialog[open]", ".artdeco-modal__content", "main"]
+            "selectors": ["dialog[open]", ".artdeco-modal__content", "main"],
+            "prioritizePersonReferences": False,
         }
 
     async def test_a_noise_only_overlay_is_read_again_after_the_backoff(
