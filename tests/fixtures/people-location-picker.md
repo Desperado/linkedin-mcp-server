@@ -13,12 +13,14 @@ parameters were recorded; no result cards or session data are included.
   "reset_button": "Reset",
   "suggestion_role": "button",
   "berlin_suggestion_inner_text": "Berlin, Germany",
+  "hamburg_suggestion_inner_text": "Hamburg, Germany",
   "ambiguous_berlin_examples": [
     "Berlin, Germany",
     "Berlin, Connecticut, United States",
     "Berlin, Maryland, United States"
   ],
-  "apply_button": null
+  "apply_role": "link",
+  "apply_name": "Show results"
 }
 ```
 
@@ -38,12 +40,27 @@ suggestions listed above and others, so the short input was ambiguous. Typing
 that result is not assumed to hold across other sessions. Suggestion text also
 appeared in plain spans with no explicit role. Text locators over the whole
 page can include locations in search cards behind the picker; the suggestion
-button is the reliable target. A subsequent MCP call using the button's
-assumed accessible name failed with `LinkedIn showed no location suggestion`.
-The button's observed `innerText` is the selector property in the revised
-candidate; that revision has not had a live call.
+button is the reliable target. MCP calls using the button's assumed accessible
+name and then its observed `innerText` both failed with `LinkedIn showed no
+location suggestion`. In a later bounded browser trace, the exact text locator
+matched one visible suggestion and clicking it exposed the apply link. This
+initial mismatch was traced to the adapter filling the page's last textbox
+instead of the newly opened location textbox.
+
+In a separate bounded inspection, `Hamburg, Germany` yielded one exact
+suggestion. The shorter `Hamburg` input yielded several different places.
+Local MCP calls with the corrected controls resolved Berlin and Hamburg to
+numeric `geoUrn` values `103035651` and `101949806` respectively.
+`Munich, Germany` did not yield an exact or single
+`Munich, <region>, Germany` suggestion in these observations; the picker must
+still refuse to choose a different district or metro area.
+
+The **All filters** panel's apply control was a visible link named **Show
+results**, not a button. Clicking it after the one exact Berlin suggestion
+produced the native numeric `geoUrn` shown below. The compact layout's apply
+role was not observed.
 
 The owner's manually applied Berlin filter was observed in the People URL with
 `keywords=CTO`, `geoUrn=["103035651"]`, `network=["F"]`, and
-`origin=FACETED_SEARCH`; `sid` was absent. The apply control's exact accessible
-name was not established in this observation.
+`origin=FACETED_SEARCH`; `sid` was absent. Later local MCP calls carried the
+same filter parameter names.
