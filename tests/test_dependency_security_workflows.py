@@ -42,7 +42,7 @@ def test_pull_request_audit_blocks_vulnerabilities_through_test() -> None:
     assert workflow["permissions"] == {"contents": "read"}
     assert audit["if"] == "github.event_name == 'pull_request'"
     assert audit["permissions"] == {"contents": "read"}
-    candidate, trusted, setup, scan = audit["steps"]
+    candidate, trusted, setup, lock_check, scan, upload = audit["steps"]
     assert candidate["with"] == {"path": "candidate", "persist-credentials": False}
     assert trusted["with"] == {
         "ref": "${{ github.event.repository.default_branch }}",
@@ -53,9 +53,16 @@ def test_pull_request_audit_blocks_vulnerabilities_through_test() -> None:
     }
     assert setup["with"]["version"] == "0.12.13"
     assert setup["with"]["enable-cache"] is False
+    assert lock_check["working-directory"] == "candidate"
+    assert lock_check["run"] == "uv lock --check --offline"
     assert scan["working-directory"] == "candidate"
     assert "python3 ../auditor/scripts/run_uv_audit.py --scope full" in scan["run"]
     assert 'report["state"] != "no_vulnerabilities"' in scan["run"]
+    assert upload["if"] == "always()"
+    assert upload["with"]["path"] == (
+        "${{ runner.temp }}/dependency-audit/audit-result.json"
+    )
+    assert upload["with"]["retention-days"] == 14
     assert "dependency-audit" in aggregator["needs"]
     assert aggregator["if"] == "always()"
     assert aggregator["steps"][0]["if"] == "github.event_name == 'pull_request'"
@@ -87,7 +94,7 @@ def test_dependency_audit_aggregator_decision() -> None:
 
 def test_pull_request_audit_rejects_findings_and_scanner_errors(tmp_path: Path) -> None:
     workflow = _workflow(_CI_WORKFLOW)
-    step = workflow["jobs"]["dependency-audit"]["steps"][3]
+    step = workflow["jobs"]["dependency-audit"]["steps"][4]
 
     assert step["name"] == "Audit locked dependencies"
     assert "raise SystemExit" in step["run"]

@@ -49,6 +49,30 @@ _DETAIL_CAPTURE_TEXT: dict[str, DetailCaptureTextTable] = {
 # not inferred from language prefixes or detected from page text.
 DETAIL_CAPTURE_EN_US = _DETAIL_CAPTURE_TEXT["en-US"]
 
+
+@dataclass(frozen=True)
+class PeopleLocationTextTable:
+    """Visible People-search location controls for one browser locale."""
+
+    locations_button_pattern: re.Pattern[str]
+    all_filters_button: str
+    location_entry: str
+    show_results_pattern: re.Pattern[str]
+
+
+_PEOPLE_LOCATION_TEXT: dict[str, PeopleLocationTextTable] = {
+    "en-US": PeopleLocationTextTable(
+        locations_button_pattern=re.compile(r"^Locations\b", re.IGNORECASE),
+        all_filters_button="All filters",
+        location_entry="Add a location",
+        show_results_pattern=re.compile(r"^Show(?: [\d,]+)? results$", re.IGNORECASE),
+    ),
+}
+
+# BrowserManager pins the context to en-US. Other locales need an observed
+# control table before this flow can safely select their native location UI.
+PEOPLE_LOCATION_EN_US = _PEOPLE_LOCATION_TEXT["en-US"]
+
 # Patterns that mark the start of LinkedIn page chrome (sidebar/footer).
 # Everything from the earliest match onwards is stripped.
 _NOISE_MARKERS: list[re.Pattern[str]] = [

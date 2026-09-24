@@ -1570,6 +1570,9 @@ class TestSearchPeople:
         locations.filter.return_value = locations
         locations.count = AsyncMock(return_value=0)
         all_filters = MagicMock()
+        all_filters.filter.return_value = all_filters
+        all_filters.first.wait_for = AsyncMock()
+        all_filters.count = AsyncMock(return_value=1)
         all_filters.click = AsyncMock()
         show_results = MagicMock()
         show_results.filter.return_value = show_results
@@ -1614,6 +1617,11 @@ class TestSearchPeople:
         ):
             await scraper.search_people("CTO", location="Berlin, Germany")
 
+        all_filters.filter.assert_called_once_with(visible=True)
+        all_filters.first.wait_for.assert_awaited_once_with(
+            state="visible", timeout=10000
+        )
+        all_filters.count.assert_awaited_once()
         all_filters.click.assert_awaited_once_with(timeout=10000)
         choice.add.click.assert_awaited_once_with(timeout=10000)
         choice.entry.wait_for.assert_awaited_once_with(state="visible", timeout=10000)
@@ -1642,6 +1650,29 @@ class TestSearchPeople:
             for call in mock_page.get_by_role.call_args_list
             if call.args == ("button",) and hasattr(call.kwargs.get("name"), "match")
         )
+
+    async def test_location_filter_refuses_ambiguous_all_filters(self, mock_page):
+        scraper = _scraper(mock_page)
+        locations = MagicMock()
+        locations.filter.return_value = locations
+        locations.count = AsyncMock(return_value=0)
+        all_filters = MagicMock()
+        all_filters.filter.return_value = all_filters
+        all_filters.first.wait_for = AsyncMock()
+        all_filters.count = AsyncMock(return_value=2)
+        all_filters.click = AsyncMock()
+
+        def get_by_role(role, **kwargs):
+            assert role == "button"
+            return all_filters if isinstance(kwargs["name"], str) else locations
+
+        mock_page.get_by_role = MagicMock(side_effect=get_by_role)
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="All filters was ambiguous"):
+                await scraper.search_people("CTO", location="Berlin, Germany")
+        all_filters.click.assert_not_awaited()
 
     async def test_location_filter_fails_when_no_suggestion_renders(self, mock_page):
         scraper = _scraper(mock_page)
