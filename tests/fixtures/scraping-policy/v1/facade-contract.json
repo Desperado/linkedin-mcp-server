@@ -731,7 +731,7 @@
               "type": "string"
             },
             "message": {
-              "description": "Single-line message text to send. C0 control characters and\nDEL are rejected, including CR, LF, and tab.",
+              "description": "Plain message text to send. Line breaks and tabs are\npreserved; unsupported C0 control characters and DEL are rejected.",
               "type": "string"
             },
             "profile_urn": {

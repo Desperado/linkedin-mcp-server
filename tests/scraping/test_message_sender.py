@@ -212,8 +212,8 @@ class TestSendMessage:
 
     @pytest.mark.parametrize(
         "message",
-        ["First\nSecond", "First\rSecond", "First\tSecond", "First\x7fSecond"],
-        ids=["newline", "carriage-return", "tab", "del"],
+        ["First\x01Second", "First\x7fSecond"],
+        ids=["c0-control", "del"],
     )
     async def test_control_message_is_rejected_before_browser_interaction(
         self, mock_page, message
@@ -228,7 +228,7 @@ class TestSendMessage:
 
         assert result["status"] == "invalid_message"
         assert result["message"] == (
-            "Message must not contain control characters or line breaks."
+            "Message contains an unsupported control character."
         )
         assert result["retry_safe"] is True
         navigate.assert_not_awaited()
