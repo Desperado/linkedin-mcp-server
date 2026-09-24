@@ -1007,7 +1007,7 @@ class TestMessagingTools:
             "connection request is accepted."
         ) in description
 
-    async def test_send_message_schema_explains_single_line_controls(self):
+    async def test_send_message_schema_explains_multiline_controls(self):
         from linkedin_mcp_server.tools.messaging import register_messaging_tools
 
         mcp = FastMCP("test")
@@ -1017,8 +1017,41 @@ class TestMessagingTools:
         assert tool is not None
         message_schema = tool.parameters["properties"]["message"]
         assert " ".join(message_schema["description"].split()) == (
-            "Single-line message text to send. C0 control characters and DEL are "
-            "rejected, including CR, LF, and tab."
+            "Plain message text to send. Line breaks and tabs are preserved; "
+            "unsupported C0 control characters and DEL are rejected."
+        )
+
+    async def test_send_message_normalizes_line_endings_and_keeps_paragraphs(
+        self, mock_context
+    ):
+        expected = {
+            "url": "https://www.linkedin.com/messaging/thread/abc123/",
+            "status": "sent",
+            "message": "Message sent.",
+            "recipient_selected": True,
+            "sent": True,
+        }
+        mock_extractor = _make_mock_extractor(expected)
+        from linkedin_mcp_server.tools.messaging import register_messaging_tools
+
+        mcp = FastMCP("test")
+        register_messaging_tools(mcp)
+        tool_fn = await get_tool_fn(mcp, "send_message")
+
+        result = await tool_fn(
+            "testuser",
+            "First paragraph.\r\n\r\nSecond paragraph.",
+            True,
+            mock_context,
+            extractor=mock_extractor,
+        )
+
+        assert result["status"] == "sent"
+        mock_extractor.send_message.assert_awaited_once_with(
+            "testuser",
+            "First paragraph.\n\nSecond paragraph.",
+            confirm_send=True,
+            profile_urn=None,
         )
 
     @pytest.mark.parametrize("message", ["", "   \t\n"], ids=["empty", "whitespace"])
@@ -1053,8 +1086,16 @@ class TestMessagingTools:
 
     @pytest.mark.parametrize(
         "message",
-        [f"First{chr(codepoint)}Second" for codepoint in (*range(32), 127)],
-        ids=[f"U+{codepoint:04X}" for codepoint in (*range(32), 127)],
+        [
+            f"First{chr(codepoint)}Second"
+            for codepoint in (*range(32), 127)
+            if codepoint not in {9, 10, 13}
+        ],
+        ids=[
+            f"U+{codepoint:04X}"
+            for codepoint in (*range(32), 127)
+            if codepoint not in {9, 10, 13}
+        ],
     )
     async def test_send_message_refuses_controls_before_a_session(
         self, mock_context, message
@@ -1074,7 +1115,7 @@ class TestMessagingTools:
         ready.assert_not_awaited()
         assert result["status"] == "invalid_message"
         assert result["message"] == (
-            "Message must not contain control characters or line breaks."
+            "Message contains an unsupported control character."
         )
         assert result["retry_safe"] is True
 

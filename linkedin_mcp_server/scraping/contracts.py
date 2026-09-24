@@ -99,11 +99,13 @@ def refuse_an_invalid_message(
     reason = None
     if not message.strip():
         reason = "Message must contain non-whitespace characters."
-    elif any(ord(character) < 32 or ord(character) == 127 for character in message):
-        # Keep the browser-side insertion contract to plain message text.
-        # Reject every C0 control and DEL before a session is acquired so no
-        # control input can reach the contenteditable surface.
-        reason = "Message must not contain control characters or line breaks."
+    elif any(
+        (ord(character) < 32 and character not in "\t\n\r") or ord(character) == 127
+        for character in message
+    ):
+        # Tabs and line endings are ordinary text in an approved outreach
+        # message. Reject other C0 controls and DEL before acquiring a session.
+        reason = "Message contains an unsupported control character."
     if reason is None:
         return None
     return message_action_result(
@@ -111,6 +113,11 @@ def refuse_an_invalid_message(
         "invalid_message",
         reason,
     )
+
+
+def _normalize_message_line_endings(message: str) -> str:
+    """Normalize platform line endings before exact DOM verification."""
+    return message.replace("\r\n", "\n").replace("\r", "\n")
 
 
 @dataclass

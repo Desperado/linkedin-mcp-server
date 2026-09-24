@@ -11,6 +11,7 @@ from linkedin_mcp_server.scraping.contracts import (
     ExtractedSection,
     FilterValidationError,
     message_action_result,
+    _normalize_message_line_endings,
     rate_limited_section_error,
     refuse_an_invalid_message,
 )
@@ -85,12 +86,12 @@ class TestMessageActionResult:
 
 
 class TestRefuseAnInvalidMessage:
-    @pytest.mark.parametrize("message", ["line\nbreak", "before\tafter", "text\x7f"])
-    def test_every_c0_or_del_character_is_refused(self, message: str):
+    @pytest.mark.parametrize("message", ["before\x01after", "text\x7f"])
+    def test_unsupported_control_characters_are_refused(self, message: str):
         assert refuse_an_invalid_message("alice", message) == message_action_result(
             "https://www.linkedin.com/in/alice/",
             "invalid_message",
-            "Message must not contain control characters or line breaks.",
+            "Message contains an unsupported control character.",
         )
 
     def test_whitespace_is_refused_before_normal_message_text(self):
@@ -100,8 +101,21 @@ class TestRefuseAnInvalidMessage:
             "Message must contain non-whitespace characters.",
         )
 
-    def test_safe_single_line_text_is_accepted(self):
-        assert refuse_an_invalid_message("alice", "Hello, Alice!") is None
+    def test_multiline_text_and_tabs_are_accepted(self):
+        assert refuse_an_invalid_message("alice", "Hello, Alice!\n\nThanks.") is None
+        assert refuse_an_invalid_message("alice", "Column one\tColumn two") is None
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("First\nSecond", "First\nSecond"),
+            ("First\rSecond", "First\nSecond"),
+            ("First\r\nSecond", "First\nSecond"),
+        ],
+        ids=["lf", "cr", "crlf"],
+    )
+    def test_line_endings_are_normalized(self, message: str, expected: str):
+        assert _normalize_message_line_endings(message) == expected
 
     def test_the_refusal_calls_the_owner_constructor_directly(self, monkeypatch):
         calls: list[tuple[str, str, str]] = []

@@ -826,12 +826,27 @@ _MESSAGE_COMPOSER_WRITE_JS = (
         }
         if (
             typeof document.queryCommandSupported !== 'function' ||
-            !document.queryCommandSupported('insertText') ||
+            !document.queryCommandSupported('insertHTML') ||
             typeof document.execCommand !== 'function'
         ) {
             return 'unsupported';
         }
-        const inserted = document.execCommand('insertText', false, arg.message);
+        // Use escaped text nodes separated by <br> so blank paragraphs remain
+        // exact in innerText. `insertText` turns two line feeds into nested
+        // block elements whose innerText gains an extra newline, failing the
+        // exact-copy checks later in this send path. The span preserves tabs
+        // as well as line spacing without interpreting message text as markup.
+        const escapeText = value => value.replace(/[&<>]/g, character => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+        })[character]);
+        const html = arg.message.split('\n').map(line =>
+            `<span style="white-space:pre-wrap">${escapeText(line)}</span>`
+        ).join('<br>');
+        const inserted = document.execCommand(
+            'insertHTML', false, html
+        );
         if ((editor.innerText || editor.textContent || '') === arg.message) {
             pinned.ownedMessage = arg.message;
         }
@@ -1381,11 +1396,12 @@ class MessageSender:
 
         Args:
             linkedin_username: LinkedIn username of the recipient.
-            message: The message text to send.
+            message: The message text to send, including paragraphs and tabs.
             confirm_send: Must be True to actually send (False does a dry run).
             profile_urn: Optional profile URN (e.g. ACoAAB...) to verify against
                 the recipient resolved from the loaded profile snapshot.
         """
+        message = contracts._normalize_message_line_endings(message)
         refusal = contracts.refuse_an_invalid_message(linkedin_username, message)
         if refusal is not None:
             return refusal
