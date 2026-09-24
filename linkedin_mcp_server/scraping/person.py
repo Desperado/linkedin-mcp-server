@@ -496,21 +496,27 @@ class PersonScraper:
         an arbitrary prefix or first match. Hidden nodes that repeat the label
         (a live-region announcement, for example) are not choices.
         """
-        # Suggestions are buttons. A text locator also matches location text
-        # in People cards behind the picker and can reject a valid choice as
-        # ambiguous.
-        exact = page_view.get_by_role("button", name=location, exact=True).filter(
-            visible=True
+        # Suggestions are buttons whose visible text is the location label.
+        # The name-based lookup failed on a live call; a page-wide text lookup
+        # also matches locations in People cards behind the picker.
+        exact = (
+            page_view.get_by_role("button")
+            .filter(has_text=re.compile(rf"^\s*{re.escape(location)}\s*$", re.I))
+            .filter(visible=True)
         )
         loose = None
         if "," in location:
             city, country = (part.strip() for part in location.rsplit(",", 1))
-            loose = page_view.get_by_role(
-                "button",
-                name=re.compile(
-                    rf"^{re.escape(city)}, [^,]+, {re.escape(country)}$", re.I
-                ),
-            ).filter(visible=True)
+            loose = (
+                page_view.get_by_role("button")
+                .filter(
+                    has_text=re.compile(
+                        rf"^\s*{re.escape(city)}, [^,]+, {re.escape(country)}\s*$",
+                        re.I,
+                    )
+                )
+                .filter(visible=True)
+            )
         offered = exact if loose is None else exact.or_(loose)
         try:
             await offered.first.wait_for(

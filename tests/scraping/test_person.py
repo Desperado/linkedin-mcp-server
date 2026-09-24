@@ -72,13 +72,12 @@ def _location_choice(
 ):
     """Model LinkedIn's location typeahead.
 
-    The visible typeahead choices are buttons, while ``get_by_text`` answers
-    only the "Add a location" control. ``calls`` records whether a suggestion
-    was awaited before any locator was counted.
+    The visible typeahead choices are buttons with location text, while
+    ``get_by_text`` answers only the "Add a location" control. ``calls``
+    records whether a suggestion was awaited before any locator was counted.
     """
     calls: list[str] = []
     filter_button = mock_page.get_by_role.return_value
-    filter_button.filter.return_value = filter_button
     filter_button.count = AsyncMock(return_value=1)
     add = MagicMock()
     add.click = AsyncMock()
@@ -114,23 +113,13 @@ def _location_choice(
     offered.first.wait_for = AsyncMock(side_effect=wait_for)
     exact.or_.return_value = offered
 
-    def get_by_role(role, **kwargs):
-        name = kwargs.get("name")
-        if (
-            role == "button"
-            and isinstance(name, str)
-            and name
-            in {
-                "Berlin, Germany",
-                "Munich, Germany",
-            }
-        ):
-            return exact
-        if role == "button" and hasattr(name, "pattern") and "[^,]+" in name.pattern:
-            return loose
+    def filtered_button(**kwargs):
+        pattern = kwargs.get("has_text")
+        if pattern is not None:
+            return loose if "[^,]+" in pattern.pattern else exact
         return filter_button
 
-    mock_page.get_by_role.side_effect = get_by_role
+    filter_button.filter.side_effect = filtered_button
     mock_page.get_by_text = MagicMock(return_value=add)
     return SimpleNamespace(
         add=add,
@@ -1583,17 +1572,22 @@ class TestSearchPeople:
         show_results.first.click = AsyncMock()
         textbox = MagicMock()
         textbox.last.fill = AsyncMock()
+        suggestion_buttons = MagicMock()
+
+        def filter_suggestion(**kwargs):
+            pattern = kwargs["has_text"]
+            return choice.loose if "[^,]+" in pattern.pattern else choice.exact
+
+        suggestion_buttons.filter.side_effect = filter_suggestion
 
         def get_by_role(role, **kwargs):
             if role == "textbox":
                 return textbox
+            if not kwargs:
+                assert role == observed["suggestion_role"]
+                return suggestion_buttons
             name = kwargs["name"]
             if isinstance(name, str):
-                if (
-                    role == observed["suggestion_role"]
-                    and name == observed["berlin_suggestion"]
-                ):
-                    return choice.exact
                 if name == observed["all_filters"]:
                     return all_filters
                 raise AssertionError(f"Unexpected control name: {name}")
@@ -1625,6 +1619,12 @@ class TestSearchPeople:
         )
         textbox.last.fill.assert_awaited_once_with("Berlin, Germany", timeout=10000)
         show_results.first.click.assert_awaited_once_with(timeout=10000)
+        assert any(
+            call.kwargs["has_text"].fullmatch(observed["berlin_suggestion_inner_text"])
+            for call in suggestion_buttons.filter.call_args_list
+            if "has_text" in call.kwargs
+            and "[^,]+" not in call.kwargs["has_text"].pattern
+        )
         assert any(
             call.kwargs["name"].match(observed["locations_button"])
             for call in mock_page.get_by_role.call_args_list
