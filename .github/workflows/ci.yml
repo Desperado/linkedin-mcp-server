@@ -63,7 +63,7 @@ jobs:
 
       - name: Check lockfile matches project metadata
         working-directory: candidate
-        run: uv lock --check --offline
+        run: uv lock --check
 
       - name: Audit locked dependencies
         working-directory: candidate

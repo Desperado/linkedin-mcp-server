@@ -54,7 +54,7 @@ def test_pull_request_audit_blocks_vulnerabilities_through_test() -> None:
     assert setup["with"]["version"] == "0.12.13"
     assert setup["with"]["enable-cache"] is False
     assert lock_check["working-directory"] == "candidate"
-    assert lock_check["run"] == "uv lock --check --offline"
+    assert lock_check["run"] == "uv lock --check"
     assert scan["working-directory"] == "candidate"
     assert "python3 ../auditor/scripts/run_uv_audit.py --scope full" in scan["run"]
     assert 'report["state"] != "no_vulnerabilities"' in scan["run"]
