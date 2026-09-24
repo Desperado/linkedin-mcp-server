@@ -256,6 +256,7 @@ def compose_page(
         entry.dataset.eventUrn = eventUrn;
         const unit = document.createElement('span');
         unit.className = 'message-unit';
+        unit.style.whiteSpace = 'pre-wrap';
         unit.textContent = text;
         entry.appendChild(unit);
         return entry;
@@ -906,10 +907,10 @@ class TestComposerRecipientDom:
 class TestSendConfirmationDom:
     @pytest.mark.parametrize(
         "message",
-        ["First\nSecond", "First\rSecond", "First\tSecond", "First\x7fSecond"],
-        ids=["newline", "carriage-return", "tab", "del"],
+        ["First\x01Second", "First\x7fSecond"],
+        ids=["c0-control", "del"],
     )
-    async def test_control_characters_are_rejected_before_dom_interaction(
+    async def test_unsupported_control_characters_are_rejected_before_dom_interaction(
         self, dom_page, message
     ):
         result = await send(
@@ -918,11 +919,52 @@ class TestSendConfirmationDom:
 
         assert result["status"] == "invalid_message"
         assert result["message"] == (
-            "Message must not contain control characters or line breaks."
+            "Message contains an unsupported control character."
         )
         assert result["retry_safe"] is True
         assert await dom_page.evaluate("document.body.dataset.clicked") is None
         assert (await dom_page.locator("#composer").inner_text()).strip() == ""
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("First\n\nSecond", "First\n\nSecond"),
+            ("First\r\n\r\nSecond", "First\n\nSecond"),
+            ("First\r\rSecond", "First\n\nSecond"),
+            ("First\tSecond", "First\tSecond"),
+        ],
+        ids=["paragraphs", "crlf", "cr", "tab"],
+    )
+    async def test_multiline_message_is_inserted_and_confirmed_once(
+        self, dom_page, message, expected
+    ):
+        result = await send(
+            dom_page, compose_page(ID_TRANSITION_SEND_JS), message=message
+        )
+        assert result["status"] == "sent"
+        assert result["sent"] is True
+        assert result["retry_safe"] is False
+        assert await dom_page.evaluate("document.body.dataset.clicked") == "1"
+        assert await dom_page.locator("#thread .msg").count() == 2
+        assert (
+            await dom_page.locator("#thread .msg")
+            .last.locator(".message-unit")
+            .inner_text()
+        ) == expected
+
+    async def test_message_markup_is_inserted_as_literal_text(self, dom_page):
+        message = "Use <img src=x onerror=alert(1)> literally."
+        result = await send(
+            dom_page, compose_page(ID_TRANSITION_SEND_JS), message=message
+        )
+
+        assert result["status"] == "sent"
+        assert await dom_page.locator("#composer img, #thread img").count() == 0
+        assert (
+            await dom_page.locator("#thread .msg")
+            .last.locator(".message-unit")
+            .inner_text()
+        ) == message
 
     async def test_local_bubble_without_id_transition_is_not_confirmed(self, dom_page):
         result = await send(dom_page, compose_page(FIXED_ID_BUBBLE_JS))

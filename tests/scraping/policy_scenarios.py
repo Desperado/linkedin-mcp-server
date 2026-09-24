@@ -1093,7 +1093,7 @@ async def build_policy_traces() -> dict[str, dict[str, Any]]:
         "message-sent.json": await _messaging_submission_scenario("sent"),
         "message-cancelled.json": await _messaging_cancellation_scenario(),
         "message-blank.json": await _invalid_message_scenario("   ", "blank"),
-        "message-c0.json": await _invalid_message_scenario("line\nbreak", "c0"),
+        "message-c0.json": await _invalid_message_scenario("line\x01break", "c0"),
         "message-del.json": await _invalid_message_scenario("text\x7f", "del"),
         "connect.json": await _connect_scenario(),
         "get-my-profile.json": await _get_my_profile_scenario(),

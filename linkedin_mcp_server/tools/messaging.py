@@ -19,6 +19,7 @@ from linkedin_mcp_server.dependencies import get_ready_extractor, handle_auth_er
 from linkedin_mcp_server.error_handler import raise_tool_error
 from linkedin_mcp_server.scraping.contracts import (
     SEND_INTERRUPTED_WARNING,
+    _normalize_message_line_endings,
     refuse_an_invalid_message,
 )
 
@@ -252,8 +253,8 @@ def register_messaging_tools(
 
         Args:
             linkedin_username: LinkedIn username of the recipient; a full profile URL is accepted too
-            message: Single-line message text to send. C0 control characters and
-                DEL are rejected, including CR, LF, and tab.
+            message: Plain message text to send. Line breaks and tabs are
+                preserved; unsupported C0 control characters and DEL are rejected.
             confirm_send: Must be True to send the message
             ctx: FastMCP context for progress reporting
             profile_urn: Optional profile URN (e.g. ACoAAB...) to verify against
@@ -281,6 +282,7 @@ def register_messaging_tools(
             # `InvalidReferenceError`; outside, that error would skip
             # `raise_tool_error` and reach the caller masked by
             # `mask_error_details` instead of naming the correction.
+            message = _normalize_message_line_endings(message)
             refusal = refuse_an_invalid_message(linkedin_username, message)
             if refusal is not None:
                 return refusal
