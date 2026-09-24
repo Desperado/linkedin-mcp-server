@@ -42,9 +42,11 @@ _PROFILE_MESSAGE_TARGET_JS = r"""() => {
         !anchor.hasAttribute('disabled') &&
         (anchor.getAttribute('aria-disabled') || '').toLowerCase() !== 'true';
     const normalize = value => (value || '').replace(/\s+/g, ' ').trim();
-    const validComposeHref = value => {
+    const composeRecipient = value => {
+        // The normalized recipient identifier carried by a compose href, or
+        // null when the href is not a well-formed LinkedIn compose link.
         if (typeof value !== 'string' || /[\\\x00-\x1f\x7f]/.test(value)) {
-            return false;
+            return null;
         }
         try {
             const url = new URL(value, window.location.href);
@@ -58,7 +60,7 @@ _PROFILE_MESSAGE_TARGET_JS = r"""() => {
                 url.hash ||
                 url.pathname !== '/messaging/compose/'
             ) {
-                return false;
+                return null;
             }
             const values = [
                 ...url.searchParams.getAll('recipient'),
@@ -72,42 +74,77 @@ _PROFILE_MESSAGE_TARGET_JS = r"""() => {
                     : text;
                 return /^[A-Za-z0-9_-]+$/.test(identifier) ? identifier : null;
             });
-            return normalized.length > 0 &&
+            const consistent = normalized.length > 0 &&
                 normalized.every(item => item !== null && item === normalized[0]);
+            return consistent ? normalized[0] : null;
         } catch {
-            return false;
+            return null;
         }
     };
     const main = document.querySelector('main');
     if (!main) return {status: 'unresolved'};
 
-    const section = Array.from(main.children).find(
-        element => element.matches('section') && visible(element)
+    // LinkedIn wraps the top card and may place other structural <section>
+    // elements before it. Locate the first heading-bearing section instead of
+    // assuming that main's first descendant section is the card. Inspect the
+    // first heading of any level before accepting h1/h2: an incomplete,
+    // hidden, or unrecognised owner card must never let a later person's card
+    // supply the Message action.
+    const firstHeading = main.querySelector(
+        'h1,h2,h3,h4,h5,h6,[role="heading"]'
     );
-    if (!section) return {status: 'unresolved'};
-    const headings = Array.from(section.querySelectorAll('h1')).filter(
-        heading => visible(heading) && heading.closest('section') === section
-    );
-    const visibleComposeAnchors = Array.from(
-        section.querySelectorAll('a[href*="/messaging/compose/"]')
-    ).filter(anchor => visible(anchor) && anchor.closest('section') === section);
-    const composeAnchors = visibleComposeAnchors.filter(active);
+    const recognisedHeading = heading =>
+        heading && (
+            heading.matches('h1,h2') ||
+            (
+                heading.matches('[role="heading"]') &&
+                ['1', '2'].includes(heading.getAttribute('aria-level') || '')
+            )
+        );
+    if (!recognisedHeading(firstHeading)) return {status: 'unresolved'};
+    const section = firstHeading.closest('section');
     if (
-        headings.length !== 1 ||
-        composeAnchors.length > 1 ||
-        (composeAnchors.length === 1 && visibleComposeAnchors.length !== 1)
+        !section ||
+        !main.contains(section) ||
+        !visible(section) ||
+        !visible(firstHeading)
     ) {
         return {status: 'unresolved'};
     }
-    if (composeAnchors.length === 0) {
-        return visibleComposeAnchors.length === 0
-            ? {status: 'unavailable', pageUrl: window.location.href}
-            : {status: 'unresolved'};
+    const headings = Array.from(
+        section.querySelectorAll(
+            'h1,h2,[role="heading"][aria-level="1"],[role="heading"][aria-level="2"]'
+        )
+    ).filter(
+        heading => visible(heading) && heading.closest('section') === section
+    );
+    if (headings.length !== 1 || headings[0] !== firstHeading) {
+        return {status: 'unresolved'};
     }
+    const ownComposeAnchors = section =>
+        Array.from(section.querySelectorAll('a[href*="/messaging/compose/"]')).filter(
+            anchor => anchor.closest('section') === section
+        );
+
+    // Unavailable is only claimed once the top card is positively
+    // identified and none of its Message actions are shown.
+    const visibleComposeAnchors = ownComposeAnchors(section).filter(visible);
+    if (visibleComposeAnchors.length === 0) {
+        return {status: 'unavailable', pageUrl: window.location.href};
+    }
+    // A profile can render the same Message action more than once (the top
+    // card button plus a duplicate in a highlights block). Several visible
+    // anchors are only ambiguous when they name different recipients.
+    const recipients = visibleComposeAnchors.map(
+        anchor => composeRecipient(anchor.getAttribute('href') || anchor.href || '')
+    );
+    if (recipients.some(item => item === null)) return {status: 'unresolved'};
+    if (new Set(recipients).size !== 1) return {status: 'unresolved'};
+    const composeAnchors = visibleComposeAnchors.filter(active);
+    if (composeAnchors.length === 0) return {status: 'unresolved'};
 
     const anchor = composeAnchors[0];
     const composeHref = anchor.getAttribute('href') || anchor.href || '';
-    if (!validComposeHref(composeHref)) return {status: 'unresolved'};
     return {
         status: 'resolved',
         pageUrl: window.location.href,
