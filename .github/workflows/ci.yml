@@ -32,44 +32,31 @@ jobs:
       - name: Optimize uv cache for CI
         run: uv cache prune --ci
 
-  dependency-review:
+  dependency-audit:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
-      - name: Review dependency changes
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-          fail-on-scopes: runtime, development, unknown
-          retry-on-snapshot-warnings: true
-          retry-on-snapshot-warnings-timeout: 120
+      # GitHub's dependency comparison API returns 403 for forks, even public
+      # ones. Audit the committed lock with OSV instead of silently skipping a
+      # security gate on the Lynx release branches.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      # The action reports snapshot warnings after its retry window but does not
-      # fail on them. That can make a missing head snapshot look like an empty
-      # dependency diff, so query the same comparison and reject any warning.
-      - name: Require complete dependency snapshots
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.12.13"
+          enable-cache: false
+
+      - name: Audit locked dependencies
         run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/dependency-comparison"
-          gh api --include \
-            "repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}?per_page=100" \
-            > "$response"
-          python3 - "$response" <<'PY'
+          python3 scripts/run_uv_audit.py --scope full --output-dir "$RUNNER_TEMP/dependency-audit"
+          python3 - "$RUNNER_TEMP/dependency-audit/audit-result.json" <<'PY'
+          import json
           import sys
           from pathlib import Path
 
-          header = "x-github-dependency-graph-snapshot-warnings:"
-          for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-              if not line:
-                  break
-              if line.lower().startswith(header) and line[len(header) :].strip():
-                  raise SystemExit("Dependency comparison returned snapshot warnings")
+          report = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+          if report["state"] != "no_vulnerabilities":
+              raise SystemExit("Locked dependencies failed the OSV audit")
           PY
 
   windows-daemon:
@@ -122,16 +109,16 @@ jobs:
   # check below rather than skipping it, because a skipped required check is a
   # green one.
   test:
-    needs: [dependency-review, windows-daemon, platform-behaviour]
+    needs: [dependency-audit, windows-daemon, platform-behaviour]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      # The review job is intentionally skipped for pushes to main. On pull
+      # The audit job is intentionally skipped for pushes to main. On pull
       # requests it joins this existing required check instead of adding a new
       # branch-protection context.
-      - name: Require dependency review on pull requests
+      - name: Require dependency audit on pull requests
         if: github.event_name == 'pull_request'
-        run: test '${{ needs.dependency-review.result }}' = success
+        run: test '${{ needs.dependency-audit.result }}' = success
 
       - name: Require the Windows daemon tests
         run: test '${{ needs.windows-daemon.result }}' = success

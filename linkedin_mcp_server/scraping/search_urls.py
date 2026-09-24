@@ -152,7 +152,9 @@ def build_people_search_url(
         )
 
     if geo_urn is not None and not re.fullmatch(r"[0-9]{1,30}", geo_urn):
-        raise FilterValidationError("geo_urn must be a numeric LinkedIn location URN id")
+        raise FilterValidationError(
+            "geo_urn must be a numeric LinkedIn location URN id"
+        )
     if geo_urn is not None and location is not None:
         raise FilterValidationError("Choose geo_urn or location, not both")
     if type(page) is not int or page < 1 or page > 5:

@@ -292,12 +292,16 @@ class TestBuildJobSearchUrl:
 
 class TestBuildPeopleSearchUrl:
     def test_native_geo_and_page_match_people_facet_format(self):
-        assert build_people_search_url("CTO", geo_urn="103035651", page=2, network=["S"]) == (
+        assert build_people_search_url(
+            "CTO", geo_urn="103035651", page=2, network=["S"]
+        ) == (
             f"{PEOPLE}keywords=CTO&network=%5B%22S%22%5D"
             "&geoUrn=%5B%22103035651%22%5D&page=2"
         )
 
-    @pytest.mark.parametrize("geo,page", [("Berlin", 1), ("", 1), ("103035651", 0), ("103035651", 6)])
+    @pytest.mark.parametrize(
+        "geo,page", [("Berlin", 1), ("", 1), ("103035651", 0), ("103035651", 6)]
+    )
     def test_invalid_native_filter_or_page_is_refused(self, geo: str, page: int):
         with pytest.raises(FilterValidationError):
             build_people_search_url("CTO", geo_urn=geo, page=page)
