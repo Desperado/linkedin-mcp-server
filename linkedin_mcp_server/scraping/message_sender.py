@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import os
 import re
 import time
 from typing import Any, Literal
@@ -26,6 +27,32 @@ from linkedin_mcp_server.scraping.session import ScrapingSession
 logger = logging.getLogger(__name__)
 
 _MESSAGING_COMPOSE_SELECTOR = '[role="textbox"][contenteditable="true"]'
+
+# Path of a file the embedding process owns. When set, the file is created
+# and flushed to disk before the one Send click can be issued, so a caller that
+# receives a tool error while this file is absent holds proof that nothing was
+# submitted. A caller that sees the file must treat the outcome as unknown.
+SEND_SUBMIT_MARKER_ENV = "LINKEDIN_MCP_SEND_SUBMIT_MARKER"
+
+
+def _record_submission_start() -> None:
+    """Durably record that the Send click is about to be issued.
+
+    Raises before any click when the marker cannot be written, including when
+    it already exists, so an absent marker never coexists with a submission.
+    """
+    path = os.environ.get(SEND_SUBMIT_MARKER_ENV)
+    if not path:
+        return
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
+    try:
+        os.write(descriptor, b"submit\n")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
 
 _PROFILE_MESSAGE_TARGET_JS = r"""() => {
     const visible = element => {
@@ -162,6 +189,9 @@ _PROFILE_MESSAGE_TARGET_TIMEOUT_MS = 1_000
 _MESSAGE_SUBMIT_READY_TIMEOUT_MS = 1_000
 _MESSAGE_CLEANUP_TIMEOUT_SECONDS = 1.0
 
+# Narrow exception to the generic-selector rule for #1107: enterToSend uses
+# the send-toggle class only when the verified composer has no Send button.
+# If the class changes, confirmed sends remain unavailable.
 _MESSAGE_COMPOSER_INSPECT_JS = r"""
     const visible = element => {
         const visibility = element && getComputedStyle(element).visibility;
@@ -293,6 +323,11 @@ _MESSAGE_COMPOSER_INSPECT_JS = r"""
         const localScope = localScopes.find(scope => submitButtons(scope).length > 0)
             || localScopes[0];
         const buttons = submitButtons(localScope);
+        // With LinkedIn's "Press Enter to Send" preference the composer
+        // renders no Send button, only the send-options toggle.
+        const enterToSend = buttons.length === 0 && localScopes.some(scope =>
+            Array.from(scope.querySelectorAll('.msg-form__send-toggle')).some(visible)
+        );
         return {
             status: 'valid',
             editor,
@@ -300,10 +335,31 @@ _MESSAGE_COMPOSER_INSPECT_JS = r"""
             localScope,
             owner,
             buttons,
+            enterToSend,
             active: document.activeElement === editor,
             empty: !(editor.innerText || '').replace(/\s+/g, ' ').trim(),
             messageRoute: messageRoute(target),
         };
+    };
+    // The element whose subtree holds this conversation's messages. An
+    // overlay dialog holds both the messages and the composer. On the full
+    // messaging page the owner is the composer <form> and the messages are
+    // in its sibling, so climb to the nearest ancestor that holds a message
+    // item, one visible editor, and stays below <main>. Otherwise keep the
+    // owner, which leaves the send unconfirmed rather than widening the scope.
+    const threadScope = owner => {
+        if (!owner || owner.matches('dialog, [role="dialog"]')) return owner;
+        const lists = '[data-view-name="message-list-item"]';
+        let ancestor = owner.parentElement;
+        while (ancestor && !ancestor.matches('main, body')) {
+            const editors = Array.from(ancestor.querySelectorAll(
+                '[role="textbox"][contenteditable="true"]'
+            )).filter(visible);
+            if (editors.length !== 1) return owner;
+            if (ancestor.querySelector(lists)) return ancestor;
+            ancestor = ancestor.parentElement;
+        }
+        return owner;
     };
 """
 
@@ -388,6 +444,7 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
         pinned.editor.setAttribute('data-linkedin-mcp-editor', token);
         const state = {
             owner: arg.owner,
+            scope: threadScope(arg.owner),
             editor: pinned.editor,
             expected: arg.expected,
             baseline: new Set(),
@@ -432,7 +489,7 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
             for (const [node, candidate] of state.candidates) {
                 if (
                     node.isConnected &&
-                    state.owner.contains(node) &&
+                    state.scope.contains(node) &&
                     exactUnit(node, true)
                 ) {
                     candidate.matched = true;
@@ -498,7 +555,15 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
         state.baseline = new Set(
             document.querySelectorAll('[data-view-name="message-list-item"]')
         );
-        state.observer.observe(state.owner, {
+        // Kept as an attribute: the readiness check runs in another world,
+        // where properties set on elements here are not visible.
+        marker.setAttribute('data-linkedin-mcp-route', window.location.pathname);
+        marker.setAttribute('data-linkedin-mcp-baseline', JSON.stringify(
+            Array.from(state.baseline)
+                .map(node => (node.getAttribute('data-event-urn') || '').trim())
+                .filter(Boolean)
+        ));
+        state.observer.observe(state.scope, {
             attributes: true,
             attributeFilter: ['data-event-urn'],
             attributeOldValue: true,
@@ -517,28 +582,6 @@ _MESSAGE_CONFIRMATION_READY_JS = (
     "(arg) => {"
     + _MESSAGE_COMPOSER_INSPECT_JS
     + r"""
-        if (!arg.owner?.isConnected) return false;
-        const markers = Array.from(
-            arg.owner.querySelectorAll('[data-linkedin-mcp-confirmation]')
-        ).filter(
-            marker => marker.getAttribute('data-linkedin-mcp-confirmation') === arg.token
-        );
-        if (
-            markers.length !== 1 ||
-            markers[0].getAttribute('data-linkedin-mcp-invalid') !== 'false'
-        ) {
-            return false;
-        }
-        const composer = inspect(arg);
-        if (
-            composer.status !== 'valid' ||
-            composer.messageRoute === null ||
-            composer.owner !== arg.owner ||
-            composer.buttons.length !== 1 ||
-            composer.editor.getAttribute('data-linkedin-mcp-editor') !== arg.token
-        ) {
-            return false;
-        }
         const exactVisibleUnit = node => {
             if (!visible(node)) return false;
             const elements = [node, ...node.querySelectorAll('*')].filter(visible);
@@ -551,8 +594,125 @@ _MESSAGE_CONFIRMATION_READY_JS = (
                 )
             ).length === 1;
         };
+        const itemSelector = '[data-view-name="message-list-item"]';
+        const linksRecipient = anchor => {
+            let path;
+            try {
+                path = new URL(
+                    anchor.getAttribute('href') || '', window.location.href
+                ).pathname;
+            } catch {
+                return false;
+            }
+            const identifier = /^\/in\/([^/]+)/.exec(path)?.[1];
+            return !!identifier && (
+                identifier === arg.profileUrn || `/in/${identifier}/` === arg.profilePath
+            );
+        };
+        // LinkedIn heads a message with links to its sender's profile
+        // (measured). A follow-up from the same sender is assumed to be
+        // unheaded, so the sender of a node is the nearest item at or before
+        // it that links a profile. A
+        // message from the recipient can carry the same text without this
+        // submission ever reaching LinkedIn, so refuse a node the recipient
+        // sent, or one whose sender cannot be found. Only the link path
+        // counts, never its text.
+        const sentByRecipient = (scope, node) => {
+            const all = Array.from(scope.querySelectorAll(itemSelector));
+            const sender = all.slice(0, all.indexOf(node) + 1).reverse().find(
+                item => item.querySelector('a[href*="/in/"]')
+            );
+            return !sender || Array.from(
+                sender.querySelectorAll('a[href*="/in/"]')
+            ).some(linksRecipient);
+        };
+        // LinkedIn acknowledges a send by rendering a node whose event ID is
+        // a server message URN. In an open thread it inserts that node and
+        // removes its client-side placeholder; the first message of a new
+        // thread moves the route to /messaging/thread/<id>/ and remounts the
+        // whole conversation pane, composer included. Neither keeps the
+        // observed node or the pinned composer, so accept exactly one visible
+        // exact-text node carrying a server URN that was absent before submit,
+        // inside the conversation pane of the one composer the page now shows.
+        // That node must be the newest message in the pane, so older history
+        // loaded later cannot stand in for it. A send that started on a
+        // thread route must stay on that thread. One that started on the
+        // compose route and now sits on a thread route is the first message
+        // of a new thread, whose pane holds that one message; a pane with
+        // other messages there is some other conversation, and so is one
+        // whose header does not link the recipient.
+        const serverAcknowledged = () => {
+            const marker = Array.from(
+                arg.owner?.querySelectorAll('[data-linkedin-mcp-confirmation]') || []
+            ).find(
+                node => node.getAttribute('data-linkedin-mcp-confirmation') === arg.token
+            );
+            if (!marker?.hasAttribute('data-linkedin-mcp-baseline')) return false;
+            let baselineUrns;
+            try {
+                baselineUrns = new Set(
+                    JSON.parse(marker?.getAttribute('data-linkedin-mcp-baseline'))
+                );
+            } catch {
+                return false;
+            }
+            const composer = inspect(arg);
+            if (composer.status !== 'valid' || composer.messageRoute === null) {
+                return false;
+            }
+            const scope = threadScope(composer.owner);
+            const items = Array.from(
+                scope.querySelectorAll(itemSelector)
+            ).filter(visible);
+            const startPath = marker.getAttribute('data-linkedin-mcp-route') || '';
+            const path = window.location.pathname;
+            if (path.startsWith('/messaging/thread/')) {
+                if (startPath.startsWith('/messaging/thread/')) {
+                    if (path !== startPath) return false;
+                } else if (
+                    items.length !== 1 ||
+                    !Array.from(scope.querySelectorAll('a[href*="/in/"]')).some(
+                        anchor => !anchor.closest(itemSelector) &&
+                            linksRecipient(anchor)
+                    )
+                ) {
+                    return false;
+                }
+            }
+            const acknowledged = items.filter(node => {
+                const urn = (node.getAttribute('data-event-urn') || '').trim();
+                return urn.startsWith('urn:li:msg_message:') &&
+                    !baselineUrns.has(urn) &&
+                    exactVisibleUnit(node);
+            });
+            return acknowledged.length === 1 &&
+                acknowledged[0] === items[items.length - 1] &&
+                !sentByRecipient(scope, acknowledged[0]);
+        };
+        if (!arg.owner?.isConnected) return serverAcknowledged();
+        const markers = Array.from(
+            arg.owner.querySelectorAll('[data-linkedin-mcp-confirmation]')
+        ).filter(
+            marker => marker.getAttribute('data-linkedin-mcp-confirmation') === arg.token
+        );
+        if (
+            markers.length !== 1 ||
+            markers[0].getAttribute('data-linkedin-mcp-invalid') !== 'false'
+        ) {
+            return serverAcknowledged();
+        }
+        const composer = inspect(arg);
+        if (
+            composer.status !== 'valid' ||
+            composer.messageRoute === null ||
+            composer.owner !== arg.owner ||
+            composer.buttons.length !== 1 ||
+            composer.editor.getAttribute('data-linkedin-mcp-editor') !== arg.token
+        ) {
+            return serverAcknowledged();
+        }
         const candidates = Array.from(
-            arg.owner.querySelectorAll('[data-linkedin-mcp-candidate]')
+            threadScope(arg.owner).querySelectorAll('[data-linkedin-mcp-candidate]')
         ).filter(node =>
             node.getAttribute('data-linkedin-mcp-candidate') === arg.token &&
             node.getAttribute('data-linkedin-mcp-matched') === arg.token &&
@@ -560,7 +720,7 @@ _MESSAGE_CONFIRMATION_READY_JS = (
             (node.getAttribute('data-event-urn') || '').trim() &&
             exactVisibleUnit(node)
         );
-        return candidates.length === 1;
+        return candidates.length === 1 || serverAcknowledged();
     }"""
 )
 
@@ -569,7 +729,7 @@ _MESSAGE_CONFIRMATION_DISPOSE_JS = r"""arg => {
     const state = confirmations?.get(arg.token);
     if (state?.observer) state.observer.disconnect();
     confirmations?.delete(arg.token);
-    for (const element of arg.owner?.querySelectorAll(
+    for (const element of (state?.scope || arg.owner)?.querySelectorAll(
         '[data-linkedin-mcp-candidate], [data-linkedin-mcp-editor], '
         + '[data-linkedin-mcp-confirmation]'
     ) || []) {
@@ -591,18 +751,23 @@ _MESSAGE_CONFIRMATION_DISPOSE_JS = r"""arg => {
 
 _MESSAGE_COMPOSER_DISPOSE_JS = r"""owner => {
     const confirmations = owner?.__linkedinMcpConfirmations;
+    const scopes = new Set([owner]);
     for (const state of confirmations?.values() || []) {
         if (state?.observer) state.observer.disconnect();
+        if (state?.scope) scopes.add(state.scope);
     }
     confirmations?.clear();
     if (owner) {
         delete owner.__linkedinMcpConfirmations;
         delete owner.__linkedinMcpComposer;
     }
-    for (const element of owner?.querySelectorAll(
-        '[data-linkedin-mcp-candidate], [data-linkedin-mcp-editor], '
-        + '[data-linkedin-mcp-confirmation]'
-    ) || []) {
+    const marked = Array.from(scopes).flatMap(scope => Array.from(
+        scope?.querySelectorAll(
+            '[data-linkedin-mcp-candidate], [data-linkedin-mcp-editor], '
+            + '[data-linkedin-mcp-confirmation]'
+        ) || []
+    ));
+    for (const element of new Set(marked)) {
         element.removeAttribute('data-linkedin-mcp-candidate');
         element.removeAttribute('data-linkedin-mcp-matched');
         element.removeAttribute('data-linkedin-mcp-transitioned');
@@ -621,6 +786,7 @@ _MESSAGE_COMPOSER_STATE_JS = (
             active: state.active === true,
             empty: state.empty === true,
             submitCount: state.buttons ? state.buttons.length : 0,
+            enterToSend: state.enterToSend === true,
             submitUsable: state.buttons?.length === 1 &&
                 !state.buttons[0].disabled &&
                 (state.buttons[0].getAttribute('aria-disabled') || '').toLowerCase()
@@ -1031,6 +1197,19 @@ def _profile_urn_from_compose_url(value: str, *, base: str | None = None) -> str
     return identifiers.pop()
 
 
+def _enter_to_send_result(url: str) -> dict[str, Any]:
+    """Report LinkedIn's "Press Enter to Send" preference as a user fix."""
+    return contracts.message_action_result(
+        url,
+        "enter_to_send_enabled",
+        "LinkedIn is set to 'Press Enter to Send', which hides the Send "
+        "button this tool clicks. In LinkedIn Messaging, open the '...' menu "
+        "next to 'Press Enter to Send', choose 'Click Send to send', then "
+        "retry. Nothing was sent.",
+        recipient_selected=True,
+    )
+
+
 def _message_page_url_is_safe(value: str, profile_urn: str) -> bool:
     parsed = _safe_linkedin_url(value)
     if parsed is None:
@@ -1336,13 +1515,18 @@ class MessageSender:
         owner: Any,
         confirmation: str,
     ) -> bool:
-        """Wait for one message-list node to gain a different opaque event ID.
+        """Wait for LinkedIn to acknowledge the submitted message in its thread.
 
-        The observer accepts only a node inserted after it was installed whose
-        exact visible message unit equals the typed text. That same connected
-        node must then change from one non-empty ``data-event-urn`` value to a
-        different non-empty value. Every timeout, remount, replacement or
-        ambiguity answers "not observed" because submission already happened.
+        Two signals count. The observer accepts a node inserted after it was
+        installed whose exact visible message unit equals the typed text and
+        which then changes from one non-empty ``data-event-urn`` value to a
+        different one. Otherwise the conversation pane of the one composer on
+        the page must hold exactly one visible exact-text node whose event ID
+        is a server message URN absent before submission: LinkedIn replaces
+        its client placeholder with that node, and the first message of a new
+        thread remounts the pane under /messaging/thread/<id>/. Every timeout
+        or ambiguity answers "not observed" because submission already
+        happened.
         """
         try:
             await self._page.wait_for_function(
@@ -1510,6 +1694,8 @@ class MessageSender:
                 "The local composer did not identify exactly the requested profile.",
             )
         recipient_selected = True
+        if state.get("enterToSend") is True:
+            return _enter_to_send_result(self._page.url)
 
         if not confirm_send:
             return contracts.message_action_result(
@@ -1551,6 +1737,8 @@ class MessageSender:
                 "The verified message composer changed before text entry.",
                 recipient_selected=recipient_selected,
             )
+        if state.get("enterToSend") is True:
+            return _enter_to_send_result(self._page.url)
         if state.get("submitCount") != 1:
             return contracts.message_action_result(
                 self._page.url,
@@ -1628,6 +1816,9 @@ class MessageSender:
                     )
 
                 try:
+                    # Written before `may_have_submitted`: a failure here is
+                    # still pre-submission and propagates as the error it is.
+                    _record_submission_start()
                     try:
                         # A click can dispatch before the evaluate call reports an
                         # error, so an exception from this round trip is ambiguous.

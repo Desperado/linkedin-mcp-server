@@ -244,7 +244,11 @@ def register_messaging_tools(
         The recipient must be directly messageable from the profile page. If
         LinkedIn does not expose a normal Message action, use connect_with_person
         first, then retry send_message only after the connection request is
-        accepted. Recipient authorization comes from validating one
+        accepted. A ``status`` of ``enter_to_send_enabled`` means the account
+        has LinkedIn's "Press Enter to Send" preference on, which hides the Send
+        button; relay the returned instructions to the user, who switches it to
+        "Click Send to send" before retrying. The dry run (confirm_send False)
+        reports it too. Recipient authorization comes from validating one
         recipient-specific Message action carrying the target URN, then following
         its browser navigation and pinning the exact final route. Visible profile
         links or recipient URNs in the composer are optional corroboration; any
@@ -265,9 +269,10 @@ def register_messaging_tools(
 
         Returns:
             Dict with url, status, message, recipient_selected, sent, and
-            retry_safe. ``sent`` is true only after the submitted message's DOM
-            node gains a different opaque event ID; this does not claim delivery
-            or read status. It is false both where nothing was submitted and
+            retry_safe. ``sent`` is true only after the thread shows the submitted
+            text under a new server message ID (or its DOM node gains a
+            different event ID); this does not claim delivery or read status.
+            It is false both where nothing was submitted and
             where the outcome is unknown. ``retry_safe`` separates the two: it
             is false from the moment a submission is attempted, and calling
             again while it is

@@ -32,7 +32,7 @@ a page-owning collaborator.
 | `job_policy` | `JOB_SEARCH_PATHS`, `RESULTS_PER_LINKEDIN_PAGE`, `SAVED_JOBS_PAGE_SIZE`, `SAVED_JOBS_PATHS`, `SAVED_JOBS_URL`, `SCROLL_BUDGET_TOTAL`, `SCROLL_DEADLINE_MAX`, `SEARCH_TIMEOUT_FRACTION`, `dropped_filters_section_error()`, `dropped_offset_section_error()`, `lost_keywords_section_error()`, `reconcile_search_references()`, `route()`, `same_job_search()` | `browser-free` |
 | `jobs` | `JobScraper` | `browser-free` |
 | `link_metadata` | `JOB_PATH_RE`, `RawReference`, `Reference`, `ReferenceKind`, `build_references()`, `choose_reference_text()`, `classify_link()`, `clean_heading()`, `clean_label()`, `dedupe_references()`, `derive_context()`, `normalize_reference()`, `normalize_url()` | `browser-free` |
-| `message_sender` | `MessageSender` | `page-owning` |
+| `message_sender` | `MessageSender`, `SEND_SUBMIT_MARKER_ENV` | `page-owning` |
 | `navigation` | `PageNavigator`, `WaitUntil` | `page-owning` |
 | `person` | `PersonScraper` | `page-owning` |
 | `posts` | `PostSearch` | `browser-free` |

@@ -1157,6 +1157,92 @@ class TestSendMessage:
             write.side_effect = RuntimeError("page closed")
             await sender.send_message("testuser", "Single line", confirm_send=True)
 
+    async def test_submission_marker_is_durable_before_the_click(
+        self, mock_page, monkeypatch, tmp_path
+    ):
+        """An embedding caller can prove non-submission by the marker's absence."""
+        marker = tmp_path / "send-submit.marker"
+        monkeypatch.setenv(message_sender_module.SEND_SUBMIT_MARKER_ENV, str(marker))
+        sender = _sender(mock_page)
+        patches = self._patch_to_composer(sender, mock_page)
+        seen: list[bool] = []
+
+        async def submit(message, *, target, owner):
+            seen.append(marker.read_bytes() == b"submit\n")
+            return "clicked"
+
+        with (
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            patches[7] as submitted,
+            patches[8],
+            patches[9],
+            patches[10],
+        ):
+            submitted.side_effect = submit
+            await sender.send_message("testuser", "Hello!", confirm_send=True)
+
+        assert seen == [True]
+        assert marker.stat().st_mode & 0o777 == 0o600
+
+    async def test_no_submission_marker_before_an_early_error(
+        self, mock_page, monkeypatch, tmp_path
+    ):
+        marker = tmp_path / "send-submit.marker"
+        monkeypatch.setenv(message_sender_module.SEND_SUBMIT_MARKER_ENV, str(marker))
+        sender = _sender(mock_page)
+        patches = self._patch_to_composer(sender, mock_page)
+
+        with (
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6] as write,
+            patches[7] as submit,
+            patches[8],
+            patches[9],
+            patches[10],
+            pytest.raises(RuntimeError, match="page closed"),
+        ):
+            write.side_effect = RuntimeError("page closed")
+            await sender.send_message("testuser", "Hello!", confirm_send=True)
+
+        assert not marker.exists()
+        submit.assert_not_awaited()
+
+    async def test_unwritable_submission_marker_stops_before_the_click(
+        self, mock_page, monkeypatch, tmp_path
+    ):
+        """A marker that cannot be created is a pre-submission error, not a send."""
+        marker = tmp_path / "send-submit.marker"
+        marker.write_bytes(b"stale\n")
+        monkeypatch.setenv(message_sender_module.SEND_SUBMIT_MARKER_ENV, str(marker))
+        sender = _sender(mock_page)
+        patches = self._patch_to_composer(sender, mock_page)
+
+        with (
+            patches[1],
+            patches[2],
+            patches[3],
+            patches[4],
+            patches[5],
+            patches[6],
+            patches[7] as submit,
+            patches[8],
+            patches[9],
+            patches[10],
+            pytest.raises(FileExistsError),
+        ):
+            await sender.send_message("testuser", "Hello!", confirm_send=True)
+
+        submit.assert_not_awaited()
+
     async def test_send_unconfirmed_when_click_adds_nothing(self, mock_page):
         """A clicked Send button that changes nothing is not a sent message."""
         sender = _sender(mock_page)
