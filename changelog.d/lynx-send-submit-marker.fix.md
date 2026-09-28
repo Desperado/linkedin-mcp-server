@@ -1,0 +1,1 @@
+Record a durable pre-click marker for `send_message` when `LINKEDIN_MCP_SEND_SUBMIT_MARKER` names a file, so an embedding caller that receives a tool error with the marker absent can prove nothing was submitted.

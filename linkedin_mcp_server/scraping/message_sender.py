@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import os
 import re
 import time
 from typing import Any, Literal
@@ -26,6 +27,32 @@ from linkedin_mcp_server.scraping.session import ScrapingSession
 logger = logging.getLogger(__name__)
 
 _MESSAGING_COMPOSE_SELECTOR = '[role="textbox"][contenteditable="true"]'
+
+# Path of a file the embedding process owns. When set, the file is created
+# and flushed to disk before the one Send click can be issued, so a caller that
+# receives a tool error while this file is absent holds proof that nothing was
+# submitted. A caller that sees the file must treat the outcome as unknown.
+SEND_SUBMIT_MARKER_ENV = "LINKEDIN_MCP_SEND_SUBMIT_MARKER"
+
+
+def _record_submission_start() -> None:
+    """Durably record that the Send click is about to be issued.
+
+    Raises before any click when the marker cannot be written, including when
+    it already exists, so an absent marker never coexists with a submission.
+    """
+    path = os.environ.get(SEND_SUBMIT_MARKER_ENV)
+    if not path:
+        return
+    descriptor = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+    )
+    try:
+        os.write(descriptor, b"submit\n")
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
 
 _PROFILE_MESSAGE_TARGET_JS = r"""() => {
     const visible = element => {
@@ -1789,6 +1816,9 @@ class MessageSender:
                     )
 
                 try:
+                    # Written before `may_have_submitted`: a failure here is
+                    # still pre-submission and propagates as the error it is.
+                    _record_submission_start()
                     try:
                         # A click can dispatch before the evaluate call reports an
                         # error, so an exception from this round trip is ambiguous.
