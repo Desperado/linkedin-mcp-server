@@ -474,16 +474,74 @@ async def send(
         )
 
 
-async def read_profile_target(page, html: str) -> _ProfileMessageTargetResolution:
+async def read_profile_target(
+    page, html: str, *, query: str = ""
+) -> _ProfileMessageTargetResolution:
     async def fulfill(route):
         await route.fulfill(status=200, content_type="text/html", body=html)
 
     await page.route("https://www.linkedin.com/**", fulfill)
-    await page.goto(f"https://www.linkedin.com{PROFILE_PATH}")
+    await page.goto(f"https://www.linkedin.com{PROFILE_PATH}{query}")
     return await _sender(page)._read_profile_message_target()
 
 
 class TestProfileMessageTargetDom:
+    async def test_send_waits_for_redesigned_top_card_before_dry_run(self, dom_page):
+        html = profile_page(f'<section id="top"><h1>{DISPLAY_NAME}</h1></section>')
+
+        async def navigate(url):
+            if url == f"https://www.linkedin.com{PROFILE_PATH}":
+                await dom_page.goto(f"{url}?isSelfProfile=false")
+                await dom_page.set_content(html)
+                await dom_page.evaluate(
+                    f"""() => setTimeout(() => {{
+                        document.getElementById('top').insertAdjacentHTML(
+                            'beforeend', '<a href="{COMPOSE_URL}">message</a>'
+                        );
+                    }}, 1500)"""
+                )
+            else:
+                assert url == COMPOSE_URL
+                await dom_page.goto(url)
+                await dom_page.set_content(compose_page(NOOP_SEND_JS))
+
+        sender = _sender(dom_page)
+        with patch.object(PageNavigator, "_navigate_to_page", side_effect=navigate):
+            result = await sender.send_message(
+                "fadi-eliwi", MESSAGE, profile_urn="ACoAAB", confirm_send=False
+            )
+
+        assert result["status"] == "confirmation_required"
+        assert result["recipient_selected"] is True
+        assert result["sent"] is False
+        assert (await dom_page.locator("#composer").inner_text()).strip() == ""
+        assert await dom_page.evaluate("document.body.dataset.clicked") is None
+
+    async def test_redesigned_profile_url_preserves_the_profile_recipient(
+        self, dom_page
+    ):
+        html = profile_page(
+            f'<section><h1>{DISPLAY_NAME}</h1><a href="{COMPOSE_URL}">message</a>'
+            "</section>",
+            other=(
+                "<section><h2>Suggested person</h2>"
+                '<a href="/messaging/compose/?recipient=OTHER">message</a></section>'
+            ),
+        )
+
+        resolution = await read_profile_target(
+            dom_page, html, query="?isSelfProfile=false"
+        )
+        reader = ProfilePageReader(
+            ScrapingSession(dom_page), _sender(dom_page)._read_profile_message_target
+        )
+
+        assert resolution.status == "resolved"
+        assert resolution.target is not None
+        assert resolution.target.profile_path == PROFILE_PATH
+        assert resolution.target.profile_urn == "ACoAAB"
+        assert await reader._extract_profile_urn() == "ACoAAB"
+
     async def test_history_only_compose_link_proves_action_absence(self, dom_page):
         html = profile_page(
             f"<section><h1>{DISPLAY_NAME}</h1></section>",

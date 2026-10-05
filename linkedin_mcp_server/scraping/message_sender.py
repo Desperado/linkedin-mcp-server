@@ -186,6 +186,10 @@ _PROFILE_MESSAGE_TARGET_READY_JS = (
     f"() => ({_PROFILE_MESSAGE_TARGET_JS})().status === 'resolved'"
 )
 _PROFILE_MESSAGE_TARGET_TIMEOUT_MS = 1_000
+# A send resolves immediately after main appears; the redesigned top card can
+# hydrate later. Profile reads ask after section extraction and keep the short
+# bounded wait for profiles that have no compose action (upstream #1214).
+_SEND_PROFILE_MESSAGE_TARGET_TIMEOUT_MS = 10_000
 _MESSAGE_SUBMIT_READY_TIMEOUT_MS = 1_000
 _MESSAGE_CLEANUP_TIMEOUT_SECONDS = 1.0
 
@@ -1168,12 +1172,21 @@ def _normalize_profile_urn(value: str | None) -> str | None:
     return candidate if _PROFILE_URN_RE.fullmatch(candidate) else None
 
 
+# LinkedIn's redesigned profile route adds this one flag (upstream #1214).
+# Do not discard arbitrary queries: they may describe a different surface.
+_BENIGN_PROFILE_QUERIES = {"", "isSelfProfile=false"}
+
+
 def _profile_path_from_url(value: str) -> str | None:
     parsed = _safe_linkedin_url(value)
-    if parsed is None or parsed.query or not _PROFILE_PATH_RE.fullmatch(parsed.path):
+    if (
+        parsed is None
+        or parsed.query not in _BENIGN_PROFILE_QUERIES
+        or not _PROFILE_PATH_RE.fullmatch(parsed.path)
+    ):
         return None
     try:
-        username = normalize_person_identifier(value)
+        username = normalize_person_identifier(parsed._replace(query="").geturl())
     except LinkedInScraperException:
         return None
     canonical_path = urlparse(person_profile_url(username, "/")).path
@@ -1234,12 +1247,14 @@ class MessageSender:
         self._navigator = navigator
         self._page = session.page
 
-    async def _read_profile_message_target(self) -> _ProfileMessageTargetResolution:
+    async def _read_profile_message_target(
+        self, *, timeout_ms: int = _PROFILE_MESSAGE_TARGET_TIMEOUT_MS
+    ) -> _ProfileMessageTargetResolution:
         """Resolve one recipient-specific top-card compose action after settling."""
         try:
             await self._page.wait_for_function(
                 _PROFILE_MESSAGE_TARGET_READY_JS,
-                timeout=_PROFILE_MESSAGE_TARGET_TIMEOUT_MS,
+                timeout=timeout_ms,
             )
         except PlaywrightTimeoutError:
             pass
@@ -1600,7 +1615,9 @@ class MessageSender:
         except PlaywrightTimeoutError:
             logger.debug("Profile page did not load for %s", linkedin_username)
 
-        resolution = await self._read_profile_message_target()
+        resolution = await self._read_profile_message_target(
+            timeout_ms=_SEND_PROFILE_MESSAGE_TARGET_TIMEOUT_MS
+        )
         if resolution.status == "unavailable":
             return contracts.message_action_result(
                 profile_url,
