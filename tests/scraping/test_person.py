@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -70,6 +71,8 @@ def _location_choice(
     loose_count: int = 0,
     wait: Exception | None = None,
     place_suggestions: list[str] | None = None,
+    stale_suggestions: bool = False,
+    picked_count: int = 1,
 ):
     """Model LinkedIn's location typeahead.
 
@@ -119,32 +122,42 @@ def _location_choice(
     offered = MagicMock()
     offered.first.wait_for = AsyncMock(side_effect=wait_for)
     exact.or_.return_value = offered
-    # The second attempt types the place alone and reads the buttons whose
-    # text starts with it; without suggestions that wait times out.
+    # The second attempt clears the field, waits for the first attempt's
+    # suggestions to go, types the place alone and reads the buttons whose
+    # text starts with it; without suggestions the visible wait times out,
+    # and stale suggestions that never go time out the hidden wait.
     candidates = MagicMock()
     candidates.filter.return_value = candidates
-    candidates.first.wait_for = AsyncMock(
-        side_effect=None
-        if place_suggestions
-        else PlaywrightTimeoutError("no place suggestion")
-    )
+
+    async def candidates_wait_for(**kwargs):
+        calls.append(f"candidates {kwargs['state']}")
+        if kwargs["state"] == "hidden" and stale_suggestions:
+            raise PlaywrightTimeoutError("first attempt's suggestions stayed")
+        if kwargs["state"] == "visible" and not place_suggestions:
+            raise PlaywrightTimeoutError("no place suggestion")
+
+    candidates.first.wait_for = AsyncMock(side_effect=candidates_wait_for)
     candidates.all_inner_texts = AsyncMock(return_value=list(place_suggestions or []))
-    chosen: dict[int, MagicMock] = {}
-
-    def nth(index: int):
-        if index not in chosen:
-            chosen[index] = MagicMock()
-            chosen[index].click = AsyncMock()
-        return chosen[index]
-
-    candidates.nth.side_effect = nth
+    # The winner is located again by its exact label before the click.
+    picked = MagicMock()
+    picked.filter.return_value = picked
+    picked.count = AsyncMock(return_value=picked_count)
+    picked.click = AsyncMock()
+    picked_patterns: list[re.Pattern[str]] = []
+    candidate_patterns: list[re.Pattern[str]] = []
 
     def filtered_button(**kwargs):
         pattern = kwargs.get("has_text")
         if pattern is not None:
-            if "\\b" in pattern.pattern:
+            if "(?=" in pattern.pattern:
+                candidate_patterns.append(pattern)
                 return candidates
-            return loose if "[^,]+" in pattern.pattern else exact
+            if "[^,]+" in pattern.pattern:
+                return loose
+            if candidates.all_inner_texts.await_count:
+                picked_patterns.append(pattern)
+                return picked
+            return exact
         return filter_button
 
     filter_button.filter.side_effect = filtered_button
@@ -155,7 +168,9 @@ def _location_choice(
         loose=loose,
         offered=offered,
         candidates=candidates,
-        chosen=chosen,
+        picked=picked,
+        picked_patterns=picked_patterns,
+        candidate_patterns=candidate_patterns,
         calls=calls,
     )
 
@@ -1847,12 +1862,82 @@ class TestSearchPeople:
         assert result["url"] == mock_page.url
         assert [call.args[0] for call in choice.entry.fill.await_args_list] == [
             "Munich, Germany",
+            "",
             "Munich",
+        ]
+        assert [c for c in choice.calls if c.startswith("candidates")] == [
+            "candidates hidden",
+            "candidates visible",
         ]
         choice.exact.click.assert_not_awaited()
         choice.loose.click.assert_not_awaited()
-        choice.chosen[0].click.assert_awaited_once_with(timeout=10000)
-        assert set(choice.chosen) == {0}
+        # Only suggestions that start with the whole place are read.
+        [offer] = choice.candidate_patterns
+        assert offer.search("Munich, Bavaria, Germany")
+        assert offer.search("Munich Metropolitan Area")
+        assert offer.search("Munich")
+        assert not offer.search("Munichville, Ohio, United States")
+        # The click is bound to the ranked label, not to its list position.
+        [pattern] = choice.picked_patterns
+        assert pattern.search("Munich, Bavaria, Germany")
+        assert pattern.search("  munich,  Bavaria,\nGermany ")
+        assert not pattern.search("Munich, North Dakota, United States")
+        assert not pattern.search("Munich, Bavaria, Germany Area")
+        choice.picked.click.assert_awaited_once_with(timeout=10000)
+
+    async def test_location_filter_refuses_a_redrawn_place_offer(self, mock_page):
+        scraper = _scraper(mock_page)
+        button = MagicMock()
+        button.click = AsyncMock()
+        button.first.click = AsyncMock()
+        button.last.fill = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        choice = _location_choice(
+            mock_page,
+            wait=PlaywrightTimeoutError("no suggestion for the full label"),
+            place_suggestions=[
+                "Munich, Bavaria, Germany",
+                "Munich, North Dakota, United States",
+            ],
+            picked_count=0,
+        )
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="missing or ambiguous"):
+                await scraper.search_people("CTO", location="Munich, Germany")
+        choice.picked.click.assert_not_awaited()
+        assert all(
+            call.kwargs.get("name") != "Show results"
+            for call in mock_page.get_by_role.call_args_list
+        )
+
+    async def test_location_filter_never_reads_stale_suggestions_as_the_offer(
+        self, mock_page
+    ):
+        scraper = _scraper(mock_page)
+        button = MagicMock()
+        button.click = AsyncMock()
+        button.first.click = AsyncMock()
+        button.last.fill = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        choice = _location_choice(
+            mock_page,
+            exact_count=2,
+            place_suggestions=["Munich, Bavaria, Germany"],
+            stale_suggestions=True,
+        )
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="missing or ambiguous"):
+                await scraper.search_people("CTO", location="Munich, Germany")
+        assert [call.args[0] for call in choice.entry.fill.await_args_list] == [
+            "Munich, Germany",
+            "",
+        ]
+        choice.candidates.all_inner_texts.assert_not_awaited()
+        choice.picked.click.assert_not_awaited()
 
     async def test_location_filter_refuses_an_ambiguous_place_offer(self, mock_page):
         scraper = _scraper(mock_page)
@@ -1874,7 +1959,8 @@ class TestSearchPeople:
         ):
             with pytest.raises(ValueError, match="missing or ambiguous"):
                 await scraper.search_people("CTO", location="Frankfurt, Germany")
-        assert not choice.chosen
+        assert not choice.picked_patterns
+        choice.picked.click.assert_not_awaited()
         assert all(
             call.kwargs.get("name") != "Show results"
             for call in mock_page.get_by_role.call_args_list

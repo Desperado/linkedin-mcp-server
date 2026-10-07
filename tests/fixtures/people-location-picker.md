@@ -79,3 +79,11 @@ is the requested country and whose region matches when one was named; regions
 and never accepts a prefix. Anything but exactly one winner keeps the picker
 closed with the first attempt's verdict. Production run `028cea6e` on
 2026-10-07 failed on "Munich, Germany" with `location_unresolved` before this.
+
+Before typing the place, the picker clears the field and requires the first
+attempt's suggestions to disappear, so they are never read as the place's
+offer. The click is bound to the winning label rather than to its position:
+the typeahead can redraw between the read and the click, and a position would
+then name another place, which Lynx would remember for the plan's label. The
+place must be followed by whitespace, a comma or the end of the text, because
+JavaScript's `\b` is ASCII-only and never ends a place such as "Malmö".

@@ -629,33 +629,58 @@ class PersonScraper:
         Only buttons whose text starts with the typed place are read, and
         ``_rank_location_suggestions`` must single out exactly one of them;
         anything else keeps the picker closed with the first attempt's verdict.
+
+        The field is cleared first and the first attempt's suggestions must be
+        gone before the place is typed, so they are never read as its offer.
+        The click is bound to the winning label, not to its position: the
+        typeahead can redraw between the read and the click, and an index
+        would then name another place.
         """
+        verdict = (
+            "LinkedIn location choice was missing or ambiguous"
+            if ambiguous
+            else "LinkedIn showed no location suggestion"
+        )
         parts = [piece.strip() for piece in location.split(",") if piece.strip()]
         place = parts[0] if parts else location.strip()
-        await self._picker_step("location entry", entry.fill(place, timeout=10000))
+        # JavaScript's \b is ASCII-only, so "Malmö" would never end on one;
+        # the place must be followed by whitespace, a comma or the end.
         candidates = (
             page_view.get_by_role("button")
-            .filter(has_text=re.compile(rf"^\s*{re.escape(place)}\b", re.I))
+            .filter(has_text=re.compile(rf"^\s*{re.escape(place)}(?=[\s,]|$)", re.I))
             .filter(visible=True)
         )
+        await self._picker_step("location entry", entry.fill("", timeout=10000))
+        try:
+            await candidates.first.wait_for(
+                state="hidden", timeout=_LOCATION_SUGGESTION_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError as exc:
+            raise FilterValidationError(verdict) from exc
+        await self._picker_step("location entry", entry.fill(place, timeout=10000))
         try:
             await candidates.first.wait_for(
                 state="visible", timeout=_LOCATION_SUGGESTION_TIMEOUT_MS
             )
         except PlaywrightTimeoutError as exc:
-            raise FilterValidationError(
-                "LinkedIn location choice was missing or ambiguous"
-                if ambiguous
-                else "LinkedIn showed no location suggestion"
-            ) from exc
-        winners = _rank_location_suggestions(
-            location, list(await candidates.all_inner_texts())
-        )
+            raise FilterValidationError(verdict) from exc
+        texts = [" ".join(text.split()) for text in await candidates.all_inner_texts()]
+        winners = _rank_location_suggestions(location, texts)
         if len(winners) != 1:
             raise FilterValidationError(
                 "LinkedIn location choice was missing or ambiguous"
             )
-        return candidates.nth(winners[0])
+        label = r"\s+".join(re.escape(word) for word in texts[winners[0]].split())
+        choice = (
+            page_view.get_by_role("button")
+            .filter(has_text=re.compile(rf"^\s*{label}\s*$", re.I))
+            .filter(visible=True)
+        )
+        if await choice.count() != 1:
+            raise FilterValidationError(
+                "LinkedIn location choice was missing or ambiguous"
+            )
+        return choice
 
     async def search_people(
         self,
