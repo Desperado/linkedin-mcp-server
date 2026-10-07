@@ -367,6 +367,91 @@ _MESSAGE_COMPOSER_INSPECT_JS = r"""
     };
 """
 
+# How a multi-line message sits in the editor. Inserting it whole with
+# `insertText` into the empty editor (`<p><br></p>`) gives one <p> per line and
+# `<p><br></p>` per empty line (measured live, September 2026). LinkedIn's
+# composer sends one line per top-level <p>, joined by LF, and reads only the
+# text inside each; a <br> within a line would be dropped and merge two lines.
+# So anything outside that grammar is not a message this tool can vouch for
+# and reads as no lines at all. Chromium stores some typed spaces as NBSP
+# (measured offline before a paragraph end), which is why lines compare with
+# NBSP folded to a space. A message without LF keeps the plain comparison it
+# always had.
+_MESSAGE_EDITOR_LINES_JS = r"""
+    const editorLines = editor => {
+        const paragraphs = Array.from(editor.childNodes);
+        if (paragraphs.length === 0) return null;
+        const lines = [];
+        for (const paragraph of paragraphs) {
+            if (
+                paragraph.nodeType !== Node.ELEMENT_NODE ||
+                paragraph.tagName !== 'P' ||
+                paragraph.attributes.length !== 0
+            ) {
+                return null;
+            }
+            const children = Array.from(paragraph.childNodes);
+            let line = '';
+            for (const [index, child] of children.entries()) {
+                if (child.nodeType === Node.TEXT_NODE) {
+                    line += child.data;
+                } else if (
+                    child.nodeType !== Node.ELEMENT_NODE ||
+                    child.tagName !== 'BR' ||
+                    index !== children.length - 1
+                ) {
+                    return null;
+                }
+            }
+            lines.push(line);
+        }
+        return lines;
+    };
+    const sameLines = (lines, expected) =>
+        lines !== null &&
+        lines.length === expected.length &&
+        lines.every(
+            (line, index) =>
+                line.replace(/\u00a0/g, ' ') === expected[index].replace(/\u00a0/g, ' ')
+        );
+    const editorMatches = (editor, text) => text.includes('\n')
+        ? sameLines(editorLines(editor), text.split('\n'))
+        : (editor.innerText || editor.textContent || '') === text;
+"""
+
+# The body of a multi-line message bubble, found by structure before any text
+# is compared. Measured offline in ten message items from four pages captured
+# in September 2026 (two threads, the inbox, a compose page): each item holds
+# exactly one <p>, whose descendants are only <br>, <span> and <a>, and whose
+# parent and grandparent are <div>s with the same rendered text; the sender
+# link, name and time sit outside that pair. An item that breaks any of this
+# has no body here, and a multi-line send in it stays unconfirmed. Text a
+# future layout places outside the pair is not seen.
+_MESSAGE_BODY_JS = r"""
+    const messageBody = (item, requireVisible = true) => {
+        const paragraphs = item.querySelectorAll('p');
+        if (paragraphs.length !== 1) return null;
+        const body = paragraphs[0];
+        const parent = body.parentElement;
+        const grandparent = parent?.parentElement;
+        if (
+            (requireVisible && !visible(body)) ||
+            Array.from(body.querySelectorAll('*')).some(
+                element => !['BR', 'SPAN', 'A'].includes(element.tagName)
+            ) ||
+            parent?.tagName !== 'DIV' ||
+            grandparent?.tagName !== 'DIV' ||
+            grandparent === item ||
+            !item.contains(grandparent) ||
+            parent.innerText !== body.innerText ||
+            grandparent.innerText !== body.innerText
+        ) {
+            return null;
+        }
+        return body;
+    };
+"""
+
 _MESSAGE_COMPOSER_OWNER_JS = (
     "(arg) => {"
     + _MESSAGE_COMPOSER_INSPECT_JS
@@ -408,6 +493,8 @@ _MESSAGE_COMPOSER_OWNER_JS = (
 _MESSAGE_CONFIRMATION_PREPARE_JS = (
     "(arg) => {"
     + _MESSAGE_COMPOSER_INSPECT_JS
+    + _MESSAGE_EDITOR_LINES_JS
+    + _MESSAGE_BODY_JS
     + r"""
         const composer = inspect(arg);
         const pinned = arg.owner?.__linkedinMcpComposer;
@@ -432,10 +519,25 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
             !arg.owner.contains(pinned.editor) ||
             document.activeElement !== pinned.editor ||
             pinned.ownedMessage !== arg.expected ||
-            (pinned.editor.innerText || pinned.editor.textContent || '') !== arg.expected
+            !editorMatches(pinned.editor, arg.expected)
         ) {
             return null;
         }
+        // What the bubble of a multi-line message should read, predicted from
+        // the editor LinkedIn sends from (NBSPs included), using only what its
+        // public bundles show: the send trims the text; the renderer turns
+        // each LF into <br> and moves the whitespace run at either edge of a
+        // line into a span holding one space; the bubble's CSS collapses runs
+        // of spaces. Every other character, NBSP among them, stays as it is.
+        const renderLine = line => (
+            /\S/.test(line)
+                ? line.replace(/^\s+/, ' ').replace(/\s+$/, ' ')
+                : line
+        ).replace(/ +/g, ' ');
+        const rendered = arg.expected.includes('\n')
+            ? editorLines(pinned.editor).join('\n').trim().split('\n')
+                .map(renderLine).join('\n')
+            : null;
 
         const counter = (arg.owner.__linkedinMcpConfirmationCounter || 0) + 1;
         arg.owner.__linkedinMcpConfirmationCounter = counter;
@@ -451,12 +553,21 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
             scope: threadScope(arg.owner),
             editor: pinned.editor,
             expected: arg.expected,
+            rendered,
             baseline: new Set(),
             candidates: new Map(),
             invalid: false,
         };
         const exactUnit = (node, requireVisible) => {
             if (requireVisible && !visible(node)) return false;
+            if (state.rendered !== null) {
+                const body = messageBody(node, requireVisible);
+                // A removed node is no longer rendered, so its line breaks
+                // cannot be read back. One that carried a body counts as a
+                // match, which can only invalidate the observation.
+                if (!requireVisible) return body !== null;
+                return body !== null && body.innerText === state.rendered;
+            }
             const elements = [node, ...node.querySelectorAll('*')].filter(
                 element => !requireVisible || visible(element)
             );
@@ -567,6 +678,9 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
                 .map(node => (node.getAttribute('data-event-urn') || '').trim())
                 .filter(Boolean)
         ));
+        if (rendered !== null) {
+            marker.setAttribute('data-linkedin-mcp-rendered', rendered);
+        }
         state.observer.observe(state.scope, {
             attributes: true,
             attributeFilter: ['data-event-urn'],
@@ -585,9 +699,24 @@ _MESSAGE_CONFIRMATION_PREPARE_JS = (
 _MESSAGE_CONFIRMATION_READY_JS = (
     "(arg) => {"
     + _MESSAGE_COMPOSER_INSPECT_JS
+    + _MESSAGE_BODY_JS
     + r"""
+        // A multi-line message is compared with the bubble text predicted at
+        // prepare time, kept on the marker. Without it nothing confirms.
+        const multiLine = arg.expected.includes('\n');
+        const rendered = multiLine
+            ? Array.from(
+                arg.owner?.querySelectorAll('[data-linkedin-mcp-confirmation]') || []
+            ).find(
+                node => node.getAttribute('data-linkedin-mcp-confirmation') === arg.token
+            )?.getAttribute('data-linkedin-mcp-rendered') ?? null
+            : null;
         const exactVisibleUnit = node => {
             if (!visible(node)) return false;
+            if (multiLine) {
+                const body = messageBody(node);
+                return rendered !== null && body !== null && body.innerText === rendered;
+            }
             const elements = [node, ...node.querySelectorAll('*')].filter(visible);
             const matches = elements.filter(
                 element => (element.innerText || '') === arg.expected
@@ -981,6 +1110,7 @@ _MESSAGE_COMPOSER_PINNED_JS = r"""
 _MESSAGE_COMPOSER_WRITE_JS = (
     "(owner, arg) => {"
     + _MESSAGE_COMPOSER_PINNED_JS
+    + _MESSAGE_EDITOR_LINES_JS
     + r"""
         let pinned = validatePinned(arg, false);
         if (!pinned) return 'invalid';
@@ -996,28 +1126,13 @@ _MESSAGE_COMPOSER_WRITE_JS = (
         }
         if (
             typeof document.queryCommandSupported !== 'function' ||
-            !document.queryCommandSupported('insertHTML') ||
+            !document.queryCommandSupported('insertText') ||
             typeof document.execCommand !== 'function'
         ) {
             return 'unsupported';
         }
-        // Use escaped text nodes separated by <br> so blank paragraphs remain
-        // exact in innerText. `insertText` turns two line feeds into nested
-        // block elements whose innerText gains an extra newline, failing the
-        // exact-copy checks later in this send path. The span preserves tabs
-        // as well as line spacing without interpreting message text as markup.
-        const escapeText = value => value.replace(/[&<>]/g, character => ({
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-        })[character]);
-        const html = arg.message.split('\n').map(line =>
-            `<span style="white-space:pre-wrap">${escapeText(line)}</span>`
-        ).join('<br>');
-        const inserted = document.execCommand(
-            'insertHTML', false, html
-        );
-        if ((editor.innerText || editor.textContent || '') === arg.message) {
+        const inserted = document.execCommand('insertText', false, arg.message);
+        if (editorMatches(editor, arg.message)) {
             pinned.ownedMessage = arg.message;
         }
         if (inserted !== true) return 'unsupported';
@@ -1026,7 +1141,7 @@ _MESSAGE_COMPOSER_WRITE_JS = (
             !pinned ||
             document.activeElement !== editor ||
             pinned.ownedMessage !== arg.message ||
-            (editor.innerText || editor.textContent || '') !== arg.message
+            !editorMatches(editor, arg.message)
         ) {
             return 'invalid';
         }
@@ -1037,13 +1152,14 @@ _MESSAGE_COMPOSER_WRITE_JS = (
 _MESSAGE_COMPOSER_SUBMIT_READY_JS = (
     "(owner, arg) => {"
     + _MESSAGE_COMPOSER_PINNED_JS
+    + _MESSAGE_EDITOR_LINES_JS
     + r"""
         const pinned = validatePinned(arg, false);
         if (
             !pinned ||
             document.activeElement !== pinned.editor ||
             pinned.ownedMessage !== arg.message ||
-            (pinned.editor.innerText || pinned.editor.textContent || '') !== arg.message
+            !editorMatches(pinned.editor, arg.message)
         ) {
             return 'invalid';
         }
@@ -1054,7 +1170,10 @@ _MESSAGE_COMPOSER_SUBMIT_READY_JS = (
     }"""
 )
 
-_MESSAGE_COMPOSER_CLEANUP_JS = r"""(owner, arg) => {
+_MESSAGE_COMPOSER_CLEANUP_JS = (
+    "(owner, arg) => {"
+    + _MESSAGE_EDITOR_LINES_JS
+    + r"""
     const pinned = owner?.__linkedinMcpComposer;
     if (!pinned || pinned.ownedMessage !== arg.message) return false;
     const {editor, ancestorChain} = pinned;
@@ -1074,7 +1193,7 @@ _MESSAGE_COMPOSER_CLEANUP_JS = r"""(owner, arg) => {
         currentChain.some((scope, index) => scope !== ancestorChain[index]) ||
         !currentChain.includes(owner) ||
         !owner.contains(editor) ||
-        (editor.innerText || editor.textContent || '') !== arg.message
+        !editorMatches(editor, arg.message)
     ) {
         return false;
     }
@@ -1088,17 +1207,19 @@ _MESSAGE_COMPOSER_CLEANUP_JS = r"""(owner, arg) => {
     }));
     return true;
 }"""
+)
 
 _MESSAGE_COMPOSER_SUBMIT_JS = (
     "(owner, arg) => {"
     + _MESSAGE_COMPOSER_PINNED_JS
+    + _MESSAGE_EDITOR_LINES_JS
     + r"""
         const pinned = validatePinned(arg);
         if (
             !pinned ||
             document.activeElement !== pinned.editor ||
             pinned.ownedMessage !== arg.message ||
-            (pinned.editor.innerText || pinned.editor.textContent || '') !== arg.message
+            !editorMatches(pinned.editor, arg.message)
         ) {
             return 'invalid';
         }
@@ -1600,10 +1721,13 @@ class MessageSender:
             profile_urn: Optional profile URN (e.g. ACoAAB...) to verify against
                 the recipient resolved from the loaded profile snapshot.
         """
-        message = contracts._normalize_message_line_endings(message)
         refusal = contracts.refuse_an_invalid_message(linkedin_username, message)
         if refusal is not None:
             return refusal
+        # Every later step writes, compares and cleans up this one text, so
+        # the editor holds what LinkedIn will send and the confirmation looks
+        # for the same lines.
+        message = contracts.normalize_message_text(message)
         linkedin_username = normalize_person_identifier(linkedin_username)
         profile_url = person_profile_url(linkedin_username, "/")
 
