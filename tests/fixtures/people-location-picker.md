@@ -64,3 +64,18 @@ The owner's manually applied Berlin filter was observed in the People URL with
 `keywords=CTO`, `geoUrn=["103035651"]`, `network=["F"]`, and
 `origin=FACETED_SEARCH`; `sid` was absent. Later local MCP calls carried the
 same filter parameter names.
+
+## Second attempt by place (added 2026-10-07)
+
+LinkedIn's typeahead matches its own labels, so a plan label with a country but
+no region ("Munich, Germany") finds nothing, while the place alone ("Munich")
+lists the canonical "Munich, Bavaria, Germany" next to other places called
+Munich and a metropolitan area. When the typed label finds no suggestion or
+more than one, the picker now retypes the place alone, reads only the visible
+buttons whose text starts with it, and ranks them by fixed rules: the exact
+label, else the one suggestion whose first part is the place, whose last part
+is the requested country and whose region matches when one was named; regions
+("… Area") only when asked for. Comparison folds case, accents and whitespace
+and never accepts a prefix. Anything but exactly one winner keeps the picker
+closed with the first attempt's verdict. Production run `028cea6e` on
+2026-10-07 failed on "Munich, Germany" with `location_unresolved` before this.

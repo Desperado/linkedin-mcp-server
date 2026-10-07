@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 import logging
 import json
 import re
+import unicodedata
 
 from patchright.async_api import TimeoutError as PlaywrightTimeoutError
 
@@ -39,6 +40,77 @@ from linkedin_mcp_server.scraping.text import PEOPLE_LOCATION_EN_US, SIDEBAR_CHR
 #: after the label is typed. Suggestions arrive by network round trip, so a
 #: count taken before this wait sees none.
 _LOCATION_SUGGESTION_TIMEOUT_MS = 10000
+
+#: A suggestion that names a region rather than a place: "Munich Metropolitan
+#: Area", "Greater Munich Area". Chosen only when the plan asked for one.
+_LOCATION_AREA_PATTERN = re.compile(r"\barea$")
+
+
+def _normalize_location_text(value: str) -> str:
+    """Case-, accent- and whitespace-insensitive form of a location label."""
+    folded = unicodedata.normalize("NFKD", value)
+    folded = "".join(ch for ch in folded if not unicodedata.combining(ch))
+    return re.sub(r"\s+", " ", folded).strip().casefold()
+
+
+def _location_parts(value: str) -> list[str]:
+    """The comma-separated parts of a normalized label, empty parts dropped."""
+    return [
+        part
+        for part in (
+            piece.strip() for piece in _normalize_location_text(value).split(",")
+        )
+        if part
+    ]
+
+
+def _rank_location_suggestions(location: str, texts: list[str]) -> list[int]:
+    """Indices of the typeahead suggestions that best name ``location``.
+
+    Deterministic and closed: the exact label wins; otherwise a suggestion
+    whose first part is the requested place, whose last part is the requested
+    country (when one was named) and whose region matches (when one was
+    named). A "City, Country" request accepts the same shape first and the
+    "City, Region, Country" spelling second. Regions ("… Area") are chosen
+    only when the request itself asks for one. Comparison folds case, accents
+    and whitespace, never prefixes: "Frankfurt (Oder)" is not "Frankfurt". The
+    caller accepts a result only when exactly one index comes back.
+    """
+    request = _location_parts(location)
+    if not request:
+        return []
+    wanted = _normalize_location_text(location)
+    want_area = bool(_LOCATION_AREA_PATTERN.search(wanted))
+    place = request[0]
+    country = request[-1] if len(request) > 1 else None
+    region = request[1] if len(request) == 3 else None
+    tiers: dict[int, list[int]] = {}
+    for index, text in enumerate(texts):
+        normalized = _normalize_location_text(text)
+        parts = _location_parts(text)
+        if not parts:
+            continue
+        if normalized == wanted:
+            tiers.setdefault(0, []).append(index)
+            continue
+        if bool(_LOCATION_AREA_PATTERN.search(normalized)) != want_area:
+            continue
+        if want_area:
+            continue
+        if parts[0] != place:
+            continue
+        if country is not None and parts[-1] != country:
+            continue
+        if region is not None and (len(parts) != 3 or parts[1] != region):
+            continue
+        if len(parts) == len(request):
+            tiers.setdefault(1, []).append(index)
+        elif len(parts) == 3 and len(request) == 2:
+            tiers.setdefault(2, []).append(index)
+    for tier in sorted(tiers):
+        return tiers[tier]
+    return []
+
 
 if TYPE_CHECKING:
     from linkedin_mcp_server.callbacks import ProgressCallback
@@ -484,7 +556,9 @@ class PersonScraper:
                 f"LinkedIn location picker: {name} did not appear"
             ) from exc
 
-    async def _location_choice(self, page_view: Any, location: str) -> Any:
+    async def _location_choice(
+        self, page_view: Any, location: str, entry: Any = None
+    ) -> Any:
         """Return the one visible typeahead suggestion for ``location``.
 
         ``fill`` returns as soon as the textbox holds the text; LinkedIn then
@@ -494,7 +568,10 @@ class PersonScraper:
         LinkedIn may also insert a region between city and country ("Munich,
         Bavaria, Germany"), and exactly one such spelling is accepted, never
         an arbitrary prefix or first match. Hidden nodes that repeat the label
-        (a live-region announcement, for example) are not choices.
+        (a live-region announcement, for example) are not choices. When the
+        typed label finds nothing or more than one, and the entry is known,
+        ``_location_choice_by_place`` retypes the place alone and ranks the
+        offered suggestions by fixed rules.
         """
         # Suggestions are buttons whose visible text is the location label.
         # The name-based lookup failed on a live call; a page-wide text lookup
@@ -523,15 +600,62 @@ class PersonScraper:
                 state="visible", timeout=_LOCATION_SUGGESTION_TIMEOUT_MS
             )
         except PlaywrightTimeoutError as exc:
-            raise FilterValidationError(
-                "LinkedIn showed no location suggestion"
-            ) from exc
+            if entry is None:
+                raise FilterValidationError(
+                    "LinkedIn showed no location suggestion"
+                ) from exc
+            return await self._location_choice_by_place(
+                page_view, entry, location, ambiguous=False
+            )
         choice = exact if await exact.count() else loose
         if choice is None or await choice.count() != 1:
+            if entry is None:
+                raise FilterValidationError(
+                    "LinkedIn location choice was missing or ambiguous"
+                )
+            return await self._location_choice_by_place(
+                page_view, entry, location, ambiguous=True
+            )
+        return choice
+
+    async def _location_choice_by_place(
+        self, page_view: Any, entry: Any, location: str, *, ambiguous: bool
+    ) -> Any:
+        """Second attempt: type the place alone and rank what LinkedIn offers.
+
+        LinkedIn's typeahead matches its own labels, so a plan label such as
+        "Munich, Germany" finds nothing while "Munich" lists "Munich, Bavaria,
+        Germany" next to other places called Munich and a metropolitan area.
+        Only buttons whose text starts with the typed place are read, and
+        ``_rank_location_suggestions`` must single out exactly one of them;
+        anything else keeps the picker closed with the first attempt's verdict.
+        """
+        parts = [piece.strip() for piece in location.split(",") if piece.strip()]
+        place = parts[0] if parts else location.strip()
+        await self._picker_step("location entry", entry.fill(place, timeout=10000))
+        candidates = (
+            page_view.get_by_role("button")
+            .filter(has_text=re.compile(rf"^\s*{re.escape(place)}\b", re.I))
+            .filter(visible=True)
+        )
+        try:
+            await candidates.first.wait_for(
+                state="visible", timeout=_LOCATION_SUGGESTION_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError as exc:
+            raise FilterValidationError(
+                "LinkedIn location choice was missing or ambiguous"
+                if ambiguous
+                else "LinkedIn showed no location suggestion"
+            ) from exc
+        winners = _rank_location_suggestions(
+            location, list(await candidates.all_inner_texts())
+        )
+        if len(winners) != 1:
             raise FilterValidationError(
                 "LinkedIn location choice was missing or ambiguous"
             )
-        return choice
+        return candidates.nth(winners[0])
 
     async def search_people(
         self,
@@ -651,7 +775,7 @@ class PersonScraper:
             await self._picker_step(
                 "location entry", entry.fill(location, timeout=10000)
             )
-            choice = await self._location_choice(page_view, location)
+            choice = await self._location_choice(page_view, location, entry)
             await self._picker_step("location choice", choice.click(timeout=10000))
             # The All filters panel renders Show results as a link, while
             # compact filter layouts may render it as a button. Require one

@@ -69,6 +69,7 @@ def _location_choice(
     exact_count: int = 1,
     loose_count: int = 0,
     wait: Exception | None = None,
+    place_suggestions: list[str] | None = None,
 ):
     """Model LinkedIn's location typeahead.
 
@@ -118,10 +119,31 @@ def _location_choice(
     offered = MagicMock()
     offered.first.wait_for = AsyncMock(side_effect=wait_for)
     exact.or_.return_value = offered
+    # The second attempt types the place alone and reads the buttons whose
+    # text starts with it; without suggestions that wait times out.
+    candidates = MagicMock()
+    candidates.filter.return_value = candidates
+    candidates.first.wait_for = AsyncMock(
+        side_effect=None
+        if place_suggestions
+        else PlaywrightTimeoutError("no place suggestion")
+    )
+    candidates.all_inner_texts = AsyncMock(return_value=list(place_suggestions or []))
+    chosen: dict[int, MagicMock] = {}
+
+    def nth(index: int):
+        if index not in chosen:
+            chosen[index] = MagicMock()
+            chosen[index].click = AsyncMock()
+        return chosen[index]
+
+    candidates.nth.side_effect = nth
 
     def filtered_button(**kwargs):
         pattern = kwargs.get("has_text")
         if pattern is not None:
+            if "\\b" in pattern.pattern:
+                return candidates
             return loose if "[^,]+" in pattern.pattern else exact
         return filter_button
 
@@ -132,8 +154,83 @@ def _location_choice(
         exact=exact,
         loose=loose,
         offered=offered,
+        candidates=candidates,
+        chosen=chosen,
         calls=calls,
     )
+
+
+@pytest.mark.parametrize(
+    ("location", "texts", "expected"),
+    [
+        (
+            "Munich, Germany",
+            [
+                "Munich, Bavaria, Germany",
+                "Munich Metropolitan Area",
+                "Munich, North Dakota, United States",
+            ],
+            [0],
+        ),
+        (
+            "Berlin, Germany",
+            [
+                "Berlin, Germany",
+                "Berlin, Connecticut, United States",
+                "Berlin Metropolitan Area",
+            ],
+            [0],
+        ),
+        (
+            "Frankfurt, Germany",
+            ["Frankfurt, Hesse, Germany", "Frankfurt (Oder), Brandenburg, Germany"],
+            [0],
+        ),
+        (
+            "Frankfurt, Germany",
+            ["Frankfurt, Hesse, Germany", "Frankfurt, Brandenburg, Germany"],
+            [0, 1],
+        ),
+        (
+            "Frankfurt, Hesse, Germany",
+            ["Frankfurt, Hesse, Germany", "Frankfurt, Brandenburg, Germany"],
+            [0],
+        ),
+        (
+            "Zurich, Switzerland",
+            ["Zürich, Switzerland", "Zurich, Kansas, United States"],
+            [0],
+        ),
+        (
+            "Munich Metropolitan Area",
+            ["Munich, Bavaria, Germany", "Munich Metropolitan Area"],
+            [1],
+        ),
+        ("Germany", ["Germany", "Germany Valley, West Virginia, United States"], [0]),
+        (
+            "Munich, Germany",
+            ["Munich Metropolitan Area", "Munich, North Dakota, United States"],
+            [],
+        ),
+        ("Munich, Germany", [], []),
+    ],
+    ids=[
+        "region-spelling",
+        "exact-wins",
+        "parenthesised-place-is-different",
+        "two-regions-ambiguous",
+        "region-named",
+        "accent-folded",
+        "area-when-asked",
+        "country-only",
+        "nothing-fits",
+        "no-suggestions",
+    ],
+)
+def test_rank_location_suggestions_is_deterministic_and_closed(
+    location, texts, expected
+):
+    assert person_module._rank_location_suggestions(location, texts) == expected
 
 
 def extracted(
@@ -1712,6 +1809,76 @@ class TestSearchPeople:
                 await scraper.search_people("CTO", location="Berlin, Germany")
         choice.exact.click.assert_not_awaited()
         choice.loose.click.assert_not_awaited()
+
+    async def test_location_filter_retypes_the_place_and_ranks_the_offer(
+        self, mock_page
+    ):
+        scraper = _scraper(mock_page)
+        mock_page.url = (
+            "https://www.linkedin.com/search/results/people/"
+            "?keywords=CTO&geoUrn=%5B%22100477049%22%5D"
+        )
+        button = MagicMock()
+        button.click = AsyncMock()
+        button.first.click = AsyncMock()
+        button.last.fill = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        choice = _location_choice(
+            mock_page,
+            wait=PlaywrightTimeoutError("no suggestion for the full label"),
+            place_suggestions=[
+                "Munich, Bavaria, Germany",
+                "Munich Metropolitan Area",
+                "Munich, North Dakota, United States",
+            ],
+        )
+        with (
+            patch.object(
+                scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+            ),
+            patch.object(
+                scraper._capture,
+                "capture",
+                new_callable=AsyncMock,
+                return_value=extracted("Jane Doe"),
+            ),
+        ):
+            result = await scraper.search_people("CTO", location="Munich, Germany")
+        assert result["url"] == mock_page.url
+        assert [call.args[0] for call in choice.entry.fill.await_args_list] == [
+            "Munich, Germany",
+            "Munich",
+        ]
+        choice.exact.click.assert_not_awaited()
+        choice.loose.click.assert_not_awaited()
+        choice.chosen[0].click.assert_awaited_once_with(timeout=10000)
+        assert set(choice.chosen) == {0}
+
+    async def test_location_filter_refuses_an_ambiguous_place_offer(self, mock_page):
+        scraper = _scraper(mock_page)
+        button = MagicMock()
+        button.click = AsyncMock()
+        button.first.click = AsyncMock()
+        button.last.fill = AsyncMock()
+        mock_page.get_by_role.return_value = button
+        choice = _location_choice(
+            mock_page,
+            wait=PlaywrightTimeoutError("no suggestion for the full label"),
+            place_suggestions=[
+                "Frankfurt, Hesse, Germany",
+                "Frankfurt, Brandenburg, Germany",
+            ],
+        )
+        with patch.object(
+            scraper._navigator, "_navigate_to_page", new_callable=AsyncMock
+        ):
+            with pytest.raises(ValueError, match="missing or ambiguous"):
+                await scraper.search_people("CTO", location="Frankfurt, Germany")
+        assert not choice.chosen
+        assert all(
+            call.kwargs.get("name") != "Show results"
+            for call in mock_page.get_by_role.call_args_list
+        )
 
     async def test_location_filter_names_a_missing_picker_control(self, mock_page):
         scraper = _scraper(mock_page)
