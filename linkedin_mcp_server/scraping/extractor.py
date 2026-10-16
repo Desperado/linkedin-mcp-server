@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from patchright.async_api import Page
@@ -9,6 +10,7 @@ from patchright.async_api import Page
 from linkedin_mcp_server.config.schema import DEFAULT_TOOL_TIMEOUT_SECONDS
 from linkedin_mcp_server.scraping.capture import SectionCapture
 from linkedin_mcp_server.scraping.company import CompanyScraper
+from linkedin_mcp_server.scraping.connections import ConnectionExporter
 from linkedin_mcp_server.scraping.connection_actions import ConnectionActions
 from linkedin_mcp_server.scraping.content import PageContentReader
 from linkedin_mcp_server.scraping.contracts import (
@@ -57,6 +59,7 @@ class LinkedInExtractor:
         self._message_sender = message_sender
         self._person = person
         self._company = CompanyScraper(session, capture)
+        self._connections = ConnectionExporter(session, navigator, capture, content)
         self._connection = ConnectionActions(
             session,
             navigator,
@@ -131,6 +134,26 @@ class LinkedInExtractor:
     ) -> dict[str, Any]:
         """Send a LinkedIn connection request or accept an incoming one."""
         return await self._connection.connect_with_person(username, note=note)
+
+    async def collect_connections(
+        self, *, limit: int = 0, max_scrolls: int = 50
+    ) -> dict[str, Any]:
+        """Collect the authenticated user's visible connection cards."""
+        return await self._connections.collect_connections(
+            limit=limit, max_scrolls=max_scrolls
+        )
+
+    async def enrich_contacts(
+        self,
+        usernames: list[str],
+        chunk_size: int = 5,
+        chunk_delay: float = 30.0,
+        progress_cb: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> dict[str, Any]:
+        """Enrich profiles with visible contact information in paced chunks."""
+        return await self._connections.enrich_contacts(
+            usernames, chunk_size, chunk_delay, progress_cb
+        )
 
     async def get_sidebar_profiles(self, username: str) -> dict[str, Any]:
         """Extract profile links from sidebar sections on a profile page."""

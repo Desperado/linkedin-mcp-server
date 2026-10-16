@@ -1,0 +1,216 @@
+{
+  "call": {
+    "arguments": {
+      "chunk_delay": 0.0,
+      "chunk_size": 1,
+      "usernames": [
+        "ada-lovelace"
+      ]
+    },
+    "method": "enrich_contacts"
+  },
+  "events": [
+    {
+      "call": "enrich_contacts",
+      "callback_id": "callback-1",
+      "event": "framenavigated",
+      "kind": "listener.add"
+    },
+    {
+      "call": "enrich_contacts",
+      "extra": {
+        "target_url": "https://www.linkedin.com/in/ada-lovelace/",
+        "wait_until": "domcontentloaded"
+      },
+      "kind": "boundary.trace",
+      "label": "extractor-before-goto"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "navigate",
+      "landed_url": "https://www.linkedin.com/in/ada-lovelace/",
+      "requested_url": "https://www.linkedin.com/in/ada-lovelace/",
+      "timeout_ms": 30000,
+      "wait_until": "domcontentloaded"
+    },
+    {
+      "call": "enrich_contacts",
+      "description": "goto https://www.linkedin.com/in/ada-lovelace/",
+      "kind": "boundary.stabilize",
+      "result": null
+    },
+    {
+      "call": "enrich_contacts",
+      "extra": {
+        "target_url": "https://www.linkedin.com/in/ada-lovelace/",
+        "wait_until": "domcontentloaded"
+      },
+      "kind": "boundary.trace",
+      "label": "extractor-after-goto"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "boundary.auth_quick",
+      "result": null
+    },
+    {
+      "call": "enrich_contacts",
+      "callback_id": "callback-1",
+      "event": "framenavigated",
+      "kind": "listener.remove"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "boundary.rate_limit"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "wait_for_selector",
+      "operation": "main",
+      "selector": "main",
+      "state": "visible",
+      "timeout_ms": null
+    },
+    {
+      "call": "enrich_contacts",
+      "dismissed": false,
+      "kind": "boundary.modal"
+    },
+    {
+      "actual_scrolls": 2,
+      "call": "enrich_contacts",
+      "kind": "boundary.scroll_body",
+      "max_scrolls": 0,
+      "pause_time": 0.5
+    },
+    {
+      "arg": {
+        "selectors": [
+          "main"
+        ]
+      },
+      "call": "enrich_contacts",
+      "kind": "evaluate",
+      "operation": "root_content",
+      "program_digest": "e8a0e21ac6f5"
+    },
+    {
+      "call": "enrich_contacts",
+      "callback_id": "callback-2",
+      "event": "framenavigated",
+      "kind": "listener.add"
+    },
+    {
+      "call": "enrich_contacts",
+      "extra": {
+        "target_url": "https://www.linkedin.com/in/ada-lovelace/overlay/contact-info/",
+        "wait_until": "domcontentloaded"
+      },
+      "kind": "boundary.trace",
+      "label": "extractor-before-goto"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "navigate",
+      "landed_url": "https://www.linkedin.com/in/ada-lovelace/overlay/contact-info/",
+      "requested_url": "https://www.linkedin.com/in/ada-lovelace/overlay/contact-info/",
+      "timeout_ms": 30000,
+      "wait_until": "domcontentloaded"
+    },
+    {
+      "call": "enrich_contacts",
+      "description": "goto https://www.linkedin.com/in/ada-lovelace/overlay/contact-info/",
+      "kind": "boundary.stabilize",
+      "result": null
+    },
+    {
+      "call": "enrich_contacts",
+      "extra": {
+        "target_url": "https://www.linkedin.com/in/ada-lovelace/overlay/contact-info/",
+        "wait_until": "domcontentloaded"
+      },
+      "kind": "boundary.trace",
+      "label": "extractor-after-goto"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "boundary.auth_quick",
+      "result": null
+    },
+    {
+      "call": "enrich_contacts",
+      "callback_id": "callback-2",
+      "event": "framenavigated",
+      "kind": "listener.remove"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "boundary.rate_limit"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "wait_for_selector",
+      "operation": "dialog",
+      "selector": "dialog[open], .artdeco-modal__content",
+      "state": "visible",
+      "timeout_ms": null
+    },
+    {
+      "arg": {
+        "selectors": [
+          "dialog[open]",
+          ".artdeco-modal__content",
+          "main"
+        ]
+      },
+      "call": "enrich_contacts",
+      "kind": "evaluate",
+      "operation": "root_content",
+      "program_digest": "e8a0e21ac6f5"
+    },
+    {
+      "call": "enrich_contacts",
+      "kind": "sleep",
+      "reason": "sleep",
+      "seconds": 2.0
+    },
+    {
+      "call": "enrich_contacts",
+      "completed": 1,
+      "kind": "callback.progress",
+      "total": 1
+    }
+  ],
+  "result": {
+    "contacts": [
+      {
+        "birthday": null,
+        "company": null,
+        "contact_info_raw": "Email\n\nada@example.test",
+        "email": "ada@example.test",
+        "first_name": "Ada",
+        "headline": "Analytical Engineer",
+        "last_name": "Lovelace",
+        "location": "London",
+        "phone": null,
+        "profile_raw": "Ada Lovelace\n· 1st\nAnalytical Engineer\nLondon",
+        "username": "ada-lovelace",
+        "website": null
+      }
+    ],
+    "failed": [],
+    "pages_visited": [
+      "https://www.linkedin.com/in/ada-lovelace/",
+      "https://www.linkedin.com/in/ada-lovelace/overlay/contact-info/"
+    ],
+    "rate_limited": false,
+    "sections": {
+      "ada-lovelace_contact_info": "Email\n\nada@example.test",
+      "ada-lovelace_main_profile": "Ada Lovelace\n· 1st\nAnalytical Engineer\nLondon"
+    },
+    "total": 1,
+    "url": "https://www.linkedin.com/in/ada-lovelace/"
+  },
+  "scenario": "enrich_contacts__baseline",
+  "schema_version": 1
+}

@@ -48,7 +48,85 @@ def _make_mock_extractor(scrape_result: dict) -> MagicMock:
         return_value=ExtractedSection(text="some text", references=[])
     )
     mock.extract_feed = AsyncMock(return_value=ExtractedSection(text="", references=[]))
+    mock.collect_connections = AsyncMock(return_value=scrape_result)
+    mock.enrich_contacts = AsyncMock(return_value=scrape_result)
     return mock
+
+
+class TestConnectionTools:
+    async def test_get_my_connections_forwards_limits_and_reports_progress(
+        self, mock_context
+    ):
+        from linkedin_mcp_server.tools.connections import register_connections_tools
+
+        expected = {
+            "url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+            "sections": {"connections": "Ada Lovelace\nEngineer"},
+            "connections": [{"username": "ada", "name": "Ada Lovelace"}],
+            "total": 1,
+        }
+        extractor = _make_mock_extractor(expected)
+        mcp = FastMCP("test")
+        register_connections_tools(mcp)
+
+        tool_fn = await get_tool_fn(mcp, "get_my_connections")
+        result = await tool_fn(
+            mock_context, limit=25, max_scrolls=8, extractor=extractor
+        )
+
+        assert result == expected
+        extractor.collect_connections.assert_awaited_once_with(limit=25, max_scrolls=8)
+        assert mock_context.report_progress.await_count == 2
+
+    async def test_extract_contact_details_normalizes_deduplicates_and_reports_progress(
+        self, mock_context
+    ):
+        from linkedin_mcp_server.tools.connections import register_connections_tools
+
+        expected = {
+            "url": "https://www.linkedin.com/in/ada/",
+            "sections": {},
+            "contacts": [],
+            "total": 0,
+            "failed": [],
+            "rate_limited": False,
+        }
+        extractor = _make_mock_extractor(expected)
+        mcp = FastMCP("test")
+        register_connections_tools(mcp)
+
+        tool_fn = await get_tool_fn(mcp, "extract_contact_details")
+        result = await tool_fn(
+            " ada, https://www.linkedin.com/in/grace/, ada ",
+            mock_context,
+            chunk_size=2,
+            chunk_delay=0.5,
+            extractor=extractor,
+        )
+
+        assert result == expected
+        extractor.enrich_contacts.assert_awaited_once()
+        call = extractor.enrich_contacts.await_args
+        assert call.kwargs["usernames"] == ["ada", "grace"]
+        assert call.kwargs["chunk_size"] == 2
+        assert call.kwargs["chunk_delay"] == 0.5
+        await call.kwargs["progress_cb"](1, 2)
+        mock_context.report_progress.assert_any_await(
+            progress=1, total=2, message="Enriched 1/2 profiles"
+        )
+
+    async def test_extract_contact_details_rejects_an_empty_list(self, mock_context):
+        from linkedin_mcp_server.tools.connections import register_connections_tools
+
+        extractor = _make_mock_extractor({})
+        mcp = FastMCP("test")
+        register_connections_tools(mcp)
+
+        tool_fn = await get_tool_fn(mcp, "extract_contact_details")
+        result = await tool_fn(" , ", mock_context, extractor=extractor)
+
+        assert result["error"] == "invalid_input"
+        extractor.enrich_contacts.assert_not_awaited()
 
 
 class TestPersonTool:

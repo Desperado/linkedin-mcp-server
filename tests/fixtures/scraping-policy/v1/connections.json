@@ -1,0 +1,128 @@
+{
+  "call": {
+    "arguments": {
+      "limit": 25,
+      "max_scrolls": 8
+    },
+    "method": "collect_connections"
+  },
+  "events": [
+    {
+      "call": "collect_connections",
+      "callback_id": "callback-1",
+      "event": "framenavigated",
+      "kind": "listener.add",
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "extra": {
+        "target_url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+        "wait_until": "domcontentloaded"
+      },
+      "kind": "boundary.trace",
+      "label": "extractor-before-goto",
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "kind": "navigate",
+      "landed_url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+      "requested_url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+      "section": "connections",
+      "timeout_ms": 30000,
+      "wait_until": "domcontentloaded"
+    },
+    {
+      "call": "collect_connections",
+      "description": "goto https://www.linkedin.com/mynetwork/invite-connect/connections/",
+      "kind": "boundary.stabilize",
+      "result": null,
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "extra": {
+        "target_url": "https://www.linkedin.com/mynetwork/invite-connect/connections/",
+        "wait_until": "domcontentloaded"
+      },
+      "kind": "boundary.trace",
+      "label": "extractor-after-goto",
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "kind": "boundary.auth_quick",
+      "result": null,
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "callback_id": "callback-1",
+      "event": "framenavigated",
+      "kind": "listener.remove",
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "kind": "boundary.rate_limit",
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "kind": "wait_for_selector",
+      "operation": "main",
+      "section": "connections",
+      "selector": "main",
+      "state": "visible",
+      "timeout_ms": null
+    },
+    {
+      "call": "collect_connections",
+      "dismissed": false,
+      "kind": "boundary.modal",
+      "section": "connections"
+    },
+    {
+      "actual_scrolls": 2,
+      "call": "collect_connections",
+      "kind": "boundary.scroll_body",
+      "max_scrolls": 8,
+      "pause_time": 1.0,
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "kind": "evaluate",
+      "operation": "connections_list",
+      "program_digest": "80ee950c2487",
+      "section": "connections"
+    },
+    {
+      "call": "collect_connections",
+      "kind": "evaluate",
+      "operation": "page_text",
+      "program_digest": "d08f1804006e",
+      "section": "connections"
+    }
+  ],
+  "result": {
+    "connections": [
+      {
+        "headline": "Analytical Engineer",
+        "name": "Ada Lovelace",
+        "username": "ada-lovelace"
+      }
+    ],
+    "pages_visited": [
+      "https://www.linkedin.com/mynetwork/invite-connect/connections/"
+    ],
+    "sections": {
+      "connections": "Connections\nAda Lovelace\nAnalytical Engineer"
+    },
+    "total": 1,
+    "url": "https://www.linkedin.com/mynetwork/invite-connect/connections/"
+  },
+  "scenario": "collect_connections__baseline",
+  "schema_version": 1
+}

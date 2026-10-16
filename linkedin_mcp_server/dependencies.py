@@ -74,11 +74,11 @@ async def handle_auth_error(
     *nothing_ran_yet* says whether the tool had done any work before the failure,
     which decides whether a client may safely run the call again after signing in.
     Only :func:`get_ready_extractor` can answer yes: it is the first statement of
-    every tool body, so a failure there means nothing has been scraped. The 18
-    catch sites in the tool bodies leave it at the default, because by then the
-    scrape may be part done, and some of these tools send messages and connection
-    requests. A 19th added later is non-replayable until someone says otherwise,
-    which is the safe direction for a default to point.
+    every tool body, so a failure there means nothing has been scraped. The catch
+    sites in tool bodies leave it at the default, because by then the scrape may
+    be part done, and some tools send messages and connection requests. Any tool
+    added later is non-replayable until someone says otherwise, which is the safe
+    direction for a default to point.
     """
     if get_runtime_policy() == RuntimePolicy.DOCKER:
         raise DockerHostLoginRequiredError(
