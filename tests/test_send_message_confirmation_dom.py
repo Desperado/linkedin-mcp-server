@@ -371,6 +371,36 @@ class TestProfileMessageTargetDom:
         assert target.profile_urn == "ACoAAB"
         assert target.compose_url == COMPOSE_URL
 
+    async def test_heading_free_section_before_top_card_does_not_block_target(
+        self, dom_page
+    ):
+        html = profile_page(
+            '<section><div role="presentation"></div></section>'
+            '<div><section id="top-card">'
+            f'<h2>{DISPLAY_NAME}</h2><a href="{COMPOSE_URL}">message</a>'
+            "</section></div>"
+        )
+
+        resolution = await read_profile_target(dom_page, html)
+        target = resolution.target
+
+        assert resolution.status == "resolved"
+        assert target is not None
+        assert target.profile_urn == "ACoAAB"
+
+    async def test_section_ancestor_outside_main_stays_failed(self, dom_page):
+        html = (
+            '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body>'
+            "<section><main><h2>Alice</h2></main>"
+            f'<a href="{COMPOSE_URL}">message</a></section>'
+            "</body></html>"
+        )
+
+        resolution = await read_profile_target(dom_page, html)
+
+        assert resolution.status == "failed"
+        assert resolution.target is None
+
     async def test_later_bob_card_cannot_supply_alices_missing_action(self, dom_page):
         html = profile_page(
             '<section id="alice"><h1>Alice</h1></section>',
@@ -403,7 +433,7 @@ class TestProfileMessageTargetDom:
 
         assert resolution.status == "unavailable"
 
-    async def test_visibility_hidden_card_does_not_precede_visible_card(self, dom_page):
+    async def test_hidden_first_card_blocks_later_visible_card(self, dom_page):
         html = profile_page(
             '<section style="visibility:hidden"><h1>Bob</h1>'
             '<a href="/messaging/compose/?recipient=BOB">message</a></section>',
@@ -413,13 +443,8 @@ class TestProfileMessageTargetDom:
         )
 
         resolution = await read_profile_target(dom_page, html)
-        target = resolution.target
-
-        assert resolution.status == "resolved"
-        assert target is not None
-        assert target.display_name == "Alice"
-        assert target.profile_urn == "ACoAAB"
-        assert target.compose_url == COMPOSE_URL
+        assert resolution.status == "failed"
+        assert resolution.target is None
 
     async def test_later_sections_never_compete_with_first_top_card(self, dom_page):
         card = (

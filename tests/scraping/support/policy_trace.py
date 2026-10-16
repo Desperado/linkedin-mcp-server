@@ -603,7 +603,7 @@ def semantic_program_id(program: str) -> str:
         ("expanded === 'false'", "open_more_button"),
         ("hasIncomingActionRow", "incoming_accept"),
         ("status === 'resolved'", "profile_message_target_ready"),
-        ("const validComposeHref", "profile_message_target"),
+        ("const composeRecipient", "profile_message_target"),
         ("return inspect(target).status === 'valid'", "message_composer_ready"),
         ("submitUsable", "message_composer_state"),
         ("__linkedinMcpComposer =", "message_composer_owner"),
